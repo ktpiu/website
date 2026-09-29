@@ -22,9 +22,10 @@ import { Label } from "@/components/ui/label";
 import {
   formatCents,
   formatDate,
-  initials,
   parseDollarsToCents,
 } from "@/components/member-portal/finance/admin/shared";
+import { MemberAvatar } from "@/components/member-portal/finance/admin/MemberAvatar";
+import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 
 type Recipient = {
@@ -32,6 +33,7 @@ type Recipient = {
   userId: string;
   name: string;
   email: string;
+  avatar: string | null;
   amountCents: number;
   paidCents: number;
   remainingCents: number;
@@ -190,7 +192,11 @@ export default function FinanceChargeDetailPage() {
   }
 
   if (loading) {
-    return <div className="p-6 text-sm text-muted-foreground">Loading transaction...</div>;
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <Spinner className="size-8 text-muted-foreground" />
+      </div>
+    );
   }
 
   if (!detail) {
@@ -337,9 +343,7 @@ export default function FinanceChargeDetailPage() {
                 className="grid min-h-11 grid-cols-[minmax(0,2.4fr)_100px_100px_100px_110px_140px] items-center gap-4 border-b px-5 py-2.5 last:border-b-0"
               >
                 <div className="flex min-w-0 items-center gap-3">
-                  <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700">
-                    {initials(row.name)}
-                  </span>
+                  <MemberAvatar name={row.name} src={row.avatar} />
                   <div className="min-w-0">
                     <div className="truncate text-sm font-medium">{row.name}</div>
                     <div className="truncate text-xs text-muted-foreground">{row.email}</div>

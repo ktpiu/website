@@ -5,6 +5,7 @@ import {
   requireAppAuthContext,
   RouteAuthError,
 } from "@/lib/server-auth";
+import { getGradeLabel } from "@/lib/members";
 import { ADMIN_FINANCE_EDIT } from "@/lib/permissions";
 import {
   loadAllBasicRoles,
@@ -35,7 +36,7 @@ export async function GET() {
       loadCustomersByUserIds(userIds),
       supabase
         .from("users")
-        .select("id, is_alumni, is_inactive, is_disaffiliated"),
+        .select("id, avatar, graduation_year, is_alumni, is_inactive, is_disaffiliated"),
       supabase
         .from("finance_obligation_balances")
         .select("user_id, remaining_cents, is_overdue"),
@@ -105,6 +106,11 @@ export async function GET() {
 
       return {
         id: user.id,
+        avatar: typeof status?.avatar === "string" && status.avatar ? status.avatar : null,
+        grade: getGradeLabel(
+          typeof status?.graduation_year === "number" ? status.graduation_year : null,
+          isAlumni,
+        ),
         isAlumni,
         isInactive,
         isDisaffiliated,

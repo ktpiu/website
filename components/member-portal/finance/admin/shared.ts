@@ -8,6 +8,8 @@ export type FinanceMember = {
   financeEnabled: boolean;
   outstandingCents: number;
   overdueCount: number;
+  avatar: string | null;
+  grade: string | null;
   isAlumni: boolean;
   isInactive: boolean;
   isDisaffiliated: boolean;

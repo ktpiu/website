@@ -8,6 +8,7 @@ import { useAuthStore } from "@/lib/auth-store";
 import { canEditFinanceAdmin, canViewFinanceAdmin } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -122,12 +123,58 @@ export default function AdminFinancePage() {
 
   if (loading) {
     return (
-      <div className="p-4 md:p-6">
-        <Card>
-          <CardContent className="py-8 text-sm text-muted-foreground">
-            Loading finance admin data...
-          </CardContent>
-        </Card>
+      <div
+        className="space-y-6 p-4 md:p-8"
+        role="status"
+        aria-busy="true"
+        aria-label="Loading finance data"
+      >
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div className="space-y-2">
+            <Skeleton className="h-8 w-48" />
+            <Skeleton className="h-4 w-72" />
+          </div>
+          <div className="flex gap-2.5">
+            <Skeleton className="h-11 w-28 rounded-md" />
+            <Skeleton className="h-11 w-40 rounded-md" />
+          </div>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="space-y-2 rounded-xl border p-5">
+              <Skeleton className="h-3.5 w-28" />
+              <Skeleton className="h-8 w-24" />
+              <Skeleton className="h-3 w-36" />
+            </div>
+          ))}
+        </div>
+        <div className="overflow-hidden rounded-xl border">
+          <div className="flex items-center border-b px-5 py-3.5">
+            <Skeleton className="h-10 w-64 rounded-lg" />
+          </div>
+          <div className="hidden border-b bg-muted/40 px-5 py-3 md:block">
+            <Skeleton className="h-4 w-full" />
+          </div>
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div
+              key={i}
+              className="grid items-center gap-2 border-b px-5 py-4 last:border-b-0 md:grid-cols-[minmax(0,2.6fr)_130px_110px_minmax(0,2fr)_120px_24px] md:gap-5"
+            >
+              <div className="space-y-2">
+                <Skeleton className="h-4 w-48" />
+                <Skeleton className="h-3.5 w-64 max-w-full" />
+              </div>
+              <Skeleton className="h-4 w-24" />
+              <Skeleton className="h-4 w-20" />
+              <div className="space-y-2">
+                <Skeleton className="h-2 w-full rounded-full" />
+                <Skeleton className="h-3 w-40" />
+              </div>
+              <Skeleton className="h-5 w-16 md:ml-auto" />
+              <span />
+            </div>
+          ))}
+        </div>
       </div>
     );
   }

@@ -65,6 +65,18 @@ export async function GET(
 
     const usersById = await loadBasicUsersByIds(Array.from(allUserIds));
 
+    const avatarRes = await supabase
+      .from("users")
+      .select("id, avatar")
+      .in("id", Array.from(allUserIds));
+    if (avatarRes.error) throw avatarRes.error;
+    const avatarByUserId = new Map(
+      (avatarRes.data ?? []).map((row) => [
+        row.id as string,
+        typeof row.avatar === "string" && row.avatar ? row.avatar : null,
+      ]),
+    );
+
     const recipients = obligations.map((obligation) => {
       const user = usersById.get(obligation.user_id);
       return {
@@ -72,6 +84,7 @@ export async function GET(
         userId: obligation.user_id,
         name: user?.name ?? "Unknown User",
         email: user?.email ?? "",
+        avatar: avatarByUserId.get(obligation.user_id) ?? null,
         amountCents: obligation.amount_cents,
         paidCents: obligation.paid_cents,
         remainingCents: obligation.remaining_cents,

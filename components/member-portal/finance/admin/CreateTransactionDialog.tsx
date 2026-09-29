@@ -15,10 +15,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { MemberAvatar } from "./MemberAvatar";
 import { cn } from "@/lib/utils";
 import {
   formatCents,
-  initials,
   parseDollarsToCents,
   type FinanceMember,
   type FinanceRole,
@@ -87,6 +87,15 @@ export function CreateTransactionDialog({
       },
     ];
 
+    const gradeGroups: Group[] = ["Freshman", "Sophomore", "Junior", "Senior"].map(
+      (grade) => ({
+        key: `grade:${grade}`,
+        label: `${grade}s`,
+        hint: "Grade",
+        test: (m) => m.grade === grade,
+      }),
+    );
+
     const roleGroups: Group[] = roles.map((role) => ({
       key: `r:${role.id}`,
       label: role.name,
@@ -94,7 +103,7 @@ export function CreateTransactionDialog({
       test: (m) => m.roleIds.includes(role.id),
     }));
 
-    return [...statusGroups, ...roleGroups].map((group) => {
+    return [...statusGroups, ...gradeGroups, ...roleGroups].map((group) => {
       const count = members.filter(group.test).length;
       return {
         ...group,
@@ -456,9 +465,7 @@ export function CreateTransactionDialog({
             <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-2">
               {recipients.map(({ member, amountCents, source }) => (
                 <div key={member.id} className="flex items-center gap-3 rounded-lg px-3 py-1.5">
-                  <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700">
-                    {initials(member.name)}
-                  </span>
+                  <MemberAvatar name={member.name} src={member.avatar} />
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium">{member.name}</div>
                     <div className="truncate text-xs text-muted-foreground">
