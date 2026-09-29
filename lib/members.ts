@@ -99,6 +99,8 @@ export async function fetchPublicMembers(): Promise<PublicMember[]> {
     .select(
       "id, name, avatar, socials, major, graduation_year, is_alumni, user_roles(roles(id, name, type, priority))",
     )
+    .eq("is_hidden", false)
+    .eq("is_disaffiliated", false)
     .order("name", { ascending: true });
 
   if (error) throw error;
@@ -136,6 +138,8 @@ export async function fetchBoardMembers(
     .select(
       "id, name, avatar, socials, major, graduation_year, is_alumni, title, user_roles(roles(id, name, type, priority))",
     )
+    .eq("is_hidden", false)
+    .eq("is_disaffiliated", false)
     .order("name", { ascending: true });
 
   if (error) throw error;

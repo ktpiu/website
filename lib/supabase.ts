@@ -68,6 +68,12 @@ export interface User {
   graduation_year: number | null;
   /** Set manually once a member graduates. */
   is_alumni: boolean;
+  /** Hidden from all public pages (members, board). */
+  is_hidden: boolean;
+  /** Temporarily inactive (e.g. studying abroad). Admin-facing only. */
+  is_inactive: boolean;
+  /** Dropped/disaffiliated: hidden publicly and blocked from the member portal. */
+  is_disaffiliated: boolean;
   clerk_user_id?: string | null;
 }
 

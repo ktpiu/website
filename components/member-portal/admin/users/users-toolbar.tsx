@@ -18,6 +18,9 @@ import {
   GRADE_FILTER_OPTIONS,
   GradeFilter,
   RoleOption,
+  STATUS_FILTER_OPTIONS,
+  StatusFilterKey,
+  StatusFilterMode,
   UserFilters,
   hasActiveUserFilters,
 } from "@/components/member-portal/admin/users/users-utils";
@@ -40,6 +43,40 @@ type ActiveFilterChip = {
 function toggleValue<T>(list: T[], value: T, checked: boolean): T[] {
   if (checked) return list.includes(value) ? list : [...list, value];
   return list.filter((item) => item !== value);
+}
+
+/** Tri-state row: click the active mode again to clear it. */
+function ModeRow({
+  label,
+  mode,
+  onChange,
+}: {
+  label: string;
+  mode: StatusFilterMode | undefined;
+  onChange: (mode: StatusFilterMode | undefined) => void;
+}) {
+  const button = (target: StatusFilterMode, text: string) => (
+    <Button
+      type="button"
+      size="sm"
+      variant={mode === target ? "default" : "outline"}
+      className="h-6 px-2 text-xs"
+      aria-pressed={mode === target}
+      onClick={() => onChange(mode === target ? undefined : target)}
+    >
+      {text}
+    </Button>
+  );
+
+  return (
+    <div className="flex items-center justify-between gap-2 px-2 py-1.5 text-sm">
+      <span>{label}</span>
+      <div className="flex gap-1">
+        {button("include", "Is")}
+        {button("exclude", "Not")}
+      </div>
+    </div>
+  );
 }
 
 function FilterMenuButton({
@@ -75,10 +112,21 @@ export function UsersToolbar({
     onFiltersChange({ ...filters, ...patch });
 
   const roleNameById = new Map(roles.map((role) => [role.id, role.name]));
-  const statusCount =
-    Number(filters.incompleteProfile) +
-    Number(filters.notLinked) +
-    Number(filters.noRoles);
+  const statusCount = Object.values(filters.statuses).filter(Boolean).length;
+  const setStatus = (key: StatusFilterKey, mode: StatusFilterMode | undefined) => {
+    const next = { ...filters.statuses };
+    if (mode) next[key] = mode;
+    else delete next[key];
+    update({ statuses: next });
+  };
+  const setGradeMode = (
+    grade: GradeFilter,
+    mode: StatusFilterMode | undefined,
+  ) =>
+    update({
+      grades: toggleValue(filters.grades, grade, mode === "include"),
+      excludeGrades: toggleValue(filters.excludeGrades, grade, mode === "exclude"),
+    });
 
   const chips: ActiveFilterChip[] = [
     ...filters.roleIds.map((id) => ({
@@ -103,33 +151,26 @@ export function UsersToolbar({
       onRemove: () =>
         update({ grades: filters.grades.filter((g) => g !== grade) }),
     })),
-    ...(filters.incompleteProfile
-      ? [
-          {
-            key: "incomplete",
-            label: "Incomplete profile",
-            onRemove: () => update({ incompleteProfile: false }),
-          },
-        ]
-      : []),
-    ...(filters.notLinked
-      ? [
-          {
-            key: "not-linked",
-            label: "Not linked to a sign-in",
-            onRemove: () => update({ notLinked: false }),
-          },
-        ]
-      : []),
-    ...(filters.noRoles
-      ? [
-          {
-            key: "no-roles",
-            label: "No roles",
-            onRemove: () => update({ noRoles: false }),
-          },
-        ]
-      : []),
+    ...filters.excludeGrades.map((grade) => ({
+      key: `not-grade-${grade}`,
+      label: `Not year: ${grade}`,
+      onRemove: () =>
+        update({
+          excludeGrades: filters.excludeGrades.filter((g) => g !== grade),
+        }),
+    })),
+    ...STATUS_FILTER_OPTIONS.flatMap(({ key, label }) => {
+      const mode = filters.statuses[key];
+      return mode
+        ? [
+            {
+              key: `status-${key}`,
+              label: mode === "exclude" ? `Not: ${label}` : label,
+              onRemove: () => setStatus(key, undefined),
+            },
+          ]
+        : [];
+    }),
   ];
 
   const hasActive = hasActiveUserFilters(filters);
@@ -233,30 +274,28 @@ export function UsersToolbar({
             <DropdownMenuTrigger asChild>
               <FilterMenuButton
                 label="Year"
-                activeCount={filters.grades.length}
+                activeCount={filters.grades.length + filters.excludeGrades.length}
               />
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-48">
+            <DropdownMenuContent align="start" className="w-56">
               <DropdownMenuLabel>Filter by year</DropdownMenuLabel>
               <DropdownMenuSeparator />
-              {GRADE_FILTER_OPTIONS.map((grade) => (
-                <DropdownMenuCheckboxItem
-                  key={grade}
-                  checked={filters.grades.includes(grade)}
-                  onCheckedChange={(checked) =>
-                    update({
-                      grades: toggleValue<GradeFilter>(
-                        filters.grades,
-                        grade,
-                        checked === true,
-                      ),
-                    })
-                  }
-                  onSelect={(event) => event.preventDefault()}
-                >
-                  {grade}
-                </DropdownMenuCheckboxItem>
-              ))}
+              {GRADE_FILTER_OPTIONS.filter((grade) => grade !== "Alumni").map(
+                (grade) => (
+                  <ModeRow
+                    key={grade}
+                    label={grade}
+                    mode={
+                      filters.grades.includes(grade)
+                        ? "include"
+                        : filters.excludeGrades.includes(grade)
+                          ? "exclude"
+                          : undefined
+                    }
+                    onChange={(mode) => setGradeMode(grade, mode)}
+                  />
+                ),
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
 
@@ -264,36 +303,17 @@ export function UsersToolbar({
             <DropdownMenuTrigger asChild>
               <FilterMenuButton label="Status" activeCount={statusCount} />
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-60">
+            <DropdownMenuContent align="start" className="w-72">
               <DropdownMenuLabel>Filter by status</DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuCheckboxItem
-                checked={filters.incompleteProfile}
-                onCheckedChange={(checked) =>
-                  update({ incompleteProfile: checked === true })
-                }
-                onSelect={(event) => event.preventDefault()}
-              >
-                Incomplete profile
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem
-                checked={filters.notLinked}
-                onCheckedChange={(checked) =>
-                  update({ notLinked: checked === true })
-                }
-                onSelect={(event) => event.preventDefault()}
-              >
-                Not linked to a sign-in
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem
-                checked={filters.noRoles}
-                onCheckedChange={(checked) =>
-                  update({ noRoles: checked === true })
-                }
-                onSelect={(event) => event.preventDefault()}
-              >
-                No roles
-              </DropdownMenuCheckboxItem>
+              {STATUS_FILTER_OPTIONS.map(({ key, label }) => (
+                <ModeRow
+                  key={key}
+                  label={label}
+                  mode={filters.statuses[key]}
+                  onChange={(mode) => setStatus(key, mode)}
+                />
+              ))}
             </DropdownMenuContent>
           </DropdownMenu>
 

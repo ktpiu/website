@@ -11,6 +11,9 @@ export type EditableFields = Pick<
   | "socials"
   | "graduation_year"
   | "is_alumni"
+  | "is_hidden"
+  | "is_inactive"
+  | "is_disaffiliated"
 >;
 
 export type SocialPlatform = "insta" | "linkedin";
@@ -20,15 +23,46 @@ export type SocialEntry = {
   url: string;
 };
 
+/** Admin-managed boolean flags edited from the dialog's status switches. */
+export const STATUS_FLAGS = [
+  {
+    key: "isHidden",
+    column: "is_hidden",
+    label: "Hidden",
+    description: "Hides this member from all public pages.",
+  },
+  {
+    key: "isInactive",
+    column: "is_inactive",
+    label: "Temporarily inactive",
+    description: "For members away for a while (e.g. studying abroad).",
+  },
+  {
+    key: "isDisaffiliated",
+    column: "is_disaffiliated",
+    label: "Disaffiliated / dropped",
+    description:
+      "Hides this member from public pages and blocks them from the member portal.",
+  },
+  {
+    key: "isAlumni",
+    column: "is_alumni",
+    label: "Alumni",
+    description: "Lists this member under Alumni on the public members page.",
+  },
+] as const;
+
+export type StatusFlagKey = (typeof STATUS_FLAGS)[number]["key"];
+export type StatusFlagColumn = (typeof STATUS_FLAGS)[number]["column"];
+
 export type EditState = Partial<
-  Omit<EditableFields, "graduation_year" | "is_alumni">
+  Omit<EditableFields, "graduation_year" | StatusFlagColumn>
 > & {
   linkedinUrl?: string;
   instagramUrl?: string;
   /** Raw text from the input; parsed to a number (or null) on save. */
   graduationYear?: string;
-  isAlumni?: boolean;
-};
+} & Partial<Record<StatusFlagKey, boolean>>;
 
 export type RoleOption = {
   id: string;
@@ -57,19 +91,36 @@ export type UserFilters = {
   pledgeClassRoleIds: string[];
   /** Any of these grade labels (OR). Empty means no filter. */
   grades: GradeFilter[];
-  incompleteProfile: boolean;
-  notLinked: boolean;
-  noRoles: boolean;
+  /** Grade buckets to leave out (NOT). Applied after `grades`. */
+  excludeGrades: GradeFilter[];
+  /**
+   * Status criteria. "include" keeps only members matching the status,
+   * "exclude" drops them (e.g. alumni: "exclude" = not alumni).
+   */
+  statuses: Partial<Record<StatusFilterKey, StatusFilterMode>>;
 };
+
+export type StatusFilterMode = "include" | "exclude";
+
+export const STATUS_FILTER_OPTIONS = [
+  { key: "hidden", label: "Hidden from public" },
+  { key: "inactive", label: "Temporarily inactive" },
+  { key: "disaffiliated", label: "Disaffiliated / dropped" },
+  { key: "alumni", label: "Alumni" },
+  { key: "incompleteProfile", label: "Incomplete profile" },
+  { key: "notLinked", label: "Not linked to a sign-in" },
+  { key: "noRoles", label: "No roles" },
+] as const;
+
+export type StatusFilterKey = (typeof STATUS_FILTER_OPTIONS)[number]["key"];
 
 export const EMPTY_USER_FILTERS: UserFilters = {
   search: "",
   roleIds: [],
   pledgeClassRoleIds: [],
   grades: [],
-  incompleteProfile: false,
-  notLinked: false,
-  noRoles: false,
+  excludeGrades: [],
+  statuses: {},
 };
 
 export type SortKey =
@@ -167,7 +218,7 @@ export async function loadUsersData(): Promise<LoadUsersDataResult> {
 export function getEditableValue(
   currentUser: SupabaseUser,
   editState: Record<string, EditState>,
-  field: Exclude<keyof EditState, "isAlumni">,
+  field: Exclude<keyof EditState, StatusFlagKey>,
 ) {
   const override = editState[currentUser.id]?.[field];
   if (typeof override === "string") return override;
@@ -180,14 +231,16 @@ export function getEditableValue(
   return value ? String(value) : "";
 }
 
-export function getEditableIsAlumni(
+export function getEditableFlags(
   currentUser: SupabaseUser,
   editState: Record<string, EditState>,
-) {
-  const override = editState[currentUser.id]?.isAlumni;
-  return typeof override === "boolean"
-    ? override
-    : Boolean(currentUser.is_alumni);
+): Record<StatusFlagKey, boolean> {
+  const flags = {} as Record<StatusFlagKey, boolean>;
+  for (const { key, column } of STATUS_FLAGS) {
+    const override = editState[currentUser.id]?.[key];
+    flags[key] = typeof override === "boolean" ? override : Boolean(currentUser[column]);
+  }
+  return flags;
 }
 
 /**
@@ -351,10 +404,33 @@ export function hasActiveUserFilters(filters: UserFilters) {
     filters.roleIds.length > 0 ||
     filters.pledgeClassRoleIds.length > 0 ||
     filters.grades.length > 0 ||
-    filters.incompleteProfile ||
-    filters.notLinked ||
-    filters.noRoles
+    filters.excludeGrades.length > 0 ||
+    Object.values(filters.statuses).some(Boolean)
   );
+}
+
+function matchesStatus(
+  key: StatusFilterKey,
+  user: SupabaseUser,
+  ownRoleIds: string[],
+  ownRoles: RoleOption[],
+): boolean {
+  switch (key) {
+    case "hidden":
+      return Boolean(user.is_hidden);
+    case "inactive":
+      return Boolean(user.is_inactive);
+    case "disaffiliated":
+      return Boolean(user.is_disaffiliated);
+    case "alumni":
+      return Boolean(user.is_alumni);
+    case "incompleteProfile":
+      return isProfileIncomplete(user, ownRoles);
+    case "notLinked":
+      return !user.clerk_user_id;
+    case "noRoles":
+      return ownRoleIds.length === 0;
+  }
 }
 
 /**
@@ -373,6 +449,10 @@ export function filterUsers(
   const roleIdSet = new Set(filters.roleIds);
   const pledgeClassIdSet = new Set(filters.pledgeClassRoleIds);
   const gradeSet = new Set<GradeFilter>(filters.grades);
+  const excludeGradeSet = new Set<GradeFilter>(filters.excludeGrades);
+  const statusEntries = Object.entries(filters.statuses).filter(
+    (entry): entry is [StatusFilterKey, StatusFilterMode] => Boolean(entry[1]),
+  );
 
   return users.filter((user) => {
     const ownRoleIds = userRoleIds[user.id] ?? [];
@@ -401,13 +481,17 @@ export function filterUsers(
       return false;
     }
 
-    if (filters.incompleteProfile && !isProfileIncomplete(user, ownRoles)) {
+    if (
+      excludeGradeSet.size > 0 &&
+      excludeGradeSet.has(getGradeFilterBucket(user, now))
+    ) {
       return false;
     }
 
-    if (filters.notLinked && user.clerk_user_id) return false;
-
-    if (filters.noRoles && ownRoleIds.length > 0) return false;
+    for (const [key, mode] of statusEntries) {
+      const matches = matchesStatus(key, user, ownRoleIds, ownRoles);
+      if (mode === "include" ? !matches : matches) return false;
+    }
 
     return true;
   });

@@ -70,7 +70,8 @@ import {
   buildSocialsUpdate,
   deleteUserRecord,
   filterUsers,
-  getEditableIsAlumni,
+  getEditableFlags,
+  STATUS_FLAGS,
   getEditableValue,
   getRoleDiff,
   getRoleNameMap,
@@ -194,8 +195,10 @@ export default function AdminUsersPage() {
       const graduationYear = parseGraduationYearInput(nextState.graduationYear);
       if (graduationYear !== undefined)
         updates.graduation_year = graduationYear;
-      if (nextState.isAlumni !== undefined)
-        updates.is_alumni = nextState.isAlumni;
+      for (const { key, column } of STATUS_FLAGS) {
+        const value = nextState[key];
+        if (value !== undefined) updates[column] = value;
+      }
       if (forcedUpdates) Object.assign(updates, forcedUpdates);
       const socialsUpdate = buildSocialsUpdate(currentUser, nextState);
       if (socialsUpdate !== undefined) updates.socials = socialsUpdate;
@@ -488,6 +491,15 @@ export default function AdminUsersPage() {
                               <span className="font-semibold">
                                 {currentUser.name}
                               </span>
+                              {currentUser.is_disaffiliated ? (
+                                <Badge variant="destructive">Disaffiliated</Badge>
+                              ) : null}
+                              {currentUser.is_hidden ? (
+                                <Badge variant="outline">Hidden</Badge>
+                              ) : null}
+                              {currentUser.is_inactive ? (
+                                <Badge variant="outline">Inactive</Badge>
+                              ) : null}
                               {missingFields.length > 0 ? (
                                 <Tooltip>
                                   <TooltipTrigger asChild>
@@ -651,7 +663,7 @@ export default function AdminUsersPage() {
                           }}
                           roles={sortedRoles}
                           selectedRoleIds={getEditableRoleIds(currentUser.id)}
-                          isAlumni={getEditableIsAlumni(currentUser, editState)}
+                          flags={getEditableFlags(currentUser, editState)}
                           error={errors[currentUser.id]}
                           isSaving={saveUserId === currentUser.id}
                           isUploadingAvatar={
@@ -679,12 +691,8 @@ export default function AdminUsersPage() {
                           onFieldChange={(field, value) =>
                             handleEditChange(currentUser.id, field, value)
                           }
-                          onAlumniChange={(checked) =>
-                            handleEditChange(
-                              currentUser.id,
-                              "isAlumni",
-                              checked,
-                            )
+                          onFlagChange={(flag, checked) =>
+                            handleEditChange(currentUser.id, flag, checked)
                           }
                           onRoleToggle={(roleId, checked) =>
                             handleRoleToggle(currentUser.id, roleId, checked)

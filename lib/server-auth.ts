@@ -24,12 +24,15 @@ export type AppAuthContext = {
 };
 
 /** Why a signed-in Clerk account has no portal access. */
-export type AccessStatus = "pending" | "denied";
+export type AccessStatus = "pending" | "denied" | "disaffiliated";
 
 export const PENDING_APPROVAL_MESSAGE =
   "Your account is waiting for an administrator to approve it.";
 export const ACCESS_DENIED_MESSAGE =
   "An administrator has declined portal access for this account.";
+
+export const DISAFFILIATED_MESSAGE =
+  "This account is no longer affiliated with KTP and cannot access the member portal.";
 
 export class RouteAuthError extends Error {
   status: number;
@@ -110,7 +113,7 @@ export async function getSignedInIdentity() {
 /**
  * Verifies the Clerk session, links it to its public.users profile (an
  * email-matched profile is linked on first sign-in; nothing is created), and
- * loads the user's permission keys. Throws a 403 tagged "pending" or "denied"
+ * loads the user's permission keys. Throws a 403 tagged "pending", "denied" or "disaffiliated"
  * when the account has not been approved. Runs with the Supabase secret key.
  */
 export async function requireAppAuthContext(): Promise<AppAuthContext> {
@@ -127,6 +130,9 @@ export async function requireAppAuthContext(): Promise<AppAuthContext> {
     }
     if (resolved.status === "denied") {
       throw new RouteAuthError(403, ACCESS_DENIED_MESSAGE, "denied");
+    }
+    if (resolved.user.is_disaffiliated) {
+      throw new RouteAuthError(403, DISAFFILIATED_MESSAGE, "disaffiliated");
     }
     profile = resolved.user;
   } catch (error) {

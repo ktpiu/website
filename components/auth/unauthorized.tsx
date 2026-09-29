@@ -25,6 +25,13 @@ const COPY = {
     description: 'An administrator has declined portal access for this account.',
     body: 'The member portal is only available to current KTP members and alumni. If you believe this was a mistake, contact an administrator or try signing in with a different account.',
   },
+  disaffiliated: {
+    Icon: ShieldX,
+    tone: 'bg-destructive/10 text-destructive',
+    title: 'Access Removed',
+    description: 'This account is no longer affiliated with KTP.',
+    body: 'The member portal is only available to current KTP members and alumni. If you believe this was a mistake, contact an administrator.',
+  },
   error: {
     Icon: AlertTriangle,
     tone: 'bg-destructive/10 text-destructive',
@@ -43,7 +50,7 @@ const COPY = {
 
 export function Unauthorized({ message, status }: UnauthorizedProps) {
   const variant =
-    status === 'pending' || status === 'denied'
+    status === 'pending' || status === 'denied' || status === 'disaffiliated'
       ? status
       : message
         ? 'error'

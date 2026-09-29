@@ -78,6 +78,9 @@ function buildNewUserPayload({
     major: "",
     graduation_year: null,
     is_alumni: false,
+    is_hidden: false,
+    is_inactive: false,
+    is_disaffiliated: false,
     title: "",
     socials: [],
   };
