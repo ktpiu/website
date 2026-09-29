@@ -31,12 +31,26 @@ export async function GET() {
     ]);
 
     const userIds = users.map((user) => user.id);
-    const [customerMap, obligationSummaryRes] = await Promise.all([
+    const [customerMap, statusRes, obligationSummaryRes] = await Promise.all([
       loadCustomersByUserIds(userIds),
+      supabase
+        .from("users")
+        .select("id, is_alumni, is_inactive, is_disaffiliated"),
       supabase
         .from("finance_obligation_balances")
         .select("user_id, remaining_cents, is_overdue"),
     ]);
+
+    if (statusRes.error) {
+      throw statusRes.error;
+    }
+
+    const statusByUserId = new Map(
+      (statusRes.data ?? []).map((row) => [row.id as string, row]),
+    );
+    const pledgeClassRoleIds = new Set(
+      roles.filter((role) => role.type === "pledge_class").map((role) => role.id),
+    );
 
     if (obligationSummaryRes.error) {
       throw obligationSummaryRes.error;
@@ -83,8 +97,19 @@ export async function GET() {
       const customer = customerMap.get(user.id);
       const enabled = Boolean(customer && customer.stripe_id);
 
+      const status = statusByUserId.get(user.id);
+      const isAlumni = Boolean(status?.is_alumni);
+      const isInactive = Boolean(status?.is_inactive);
+      const isDisaffiliated = Boolean(status?.is_disaffiliated);
+      const pledgeClassRole = roleIds.find((id) => pledgeClassRoleIds.has(id));
+
       return {
         id: user.id,
+        isAlumni,
+        isInactive,
+        isDisaffiliated,
+        hasPledgeClass: Boolean(pledgeClassRole),
+        pledgeClass: pledgeClassRole ? roleNameById.get(pledgeClassRole) ?? null : null,
         name: user.name,
         email: user.email,
         role: user.role ?? null,

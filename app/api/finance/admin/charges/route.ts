@@ -17,6 +17,8 @@ import { resolveChargeRecipients } from "@/lib/finance-utils";
 
 type ChargeSummaryRow = {
   charge_id: string | null;
+  amount_cents: number | null;
+  paid_cents: number | null;
   remaining_cents: number | null;
   is_overdue: boolean | null;
   user_id: string | null;
@@ -41,7 +43,7 @@ export async function GET() {
         .order("created_at", { ascending: false }),
       supabase
         .from("finance_obligation_balances")
-        .select("charge_id, remaining_cents, is_overdue, user_id"),
+        .select("charge_id, amount_cents, paid_cents, remaining_cents, is_overdue, user_id"),
     ]);
 
     if (chargesRes.error) throw chargesRes.error;
@@ -51,6 +53,8 @@ export async function GET() {
       string,
       {
         totalAssigned: number;
+        totalCents: number;
+        paidCents: number;
         unpaidCount: number;
         overdueCount: number;
         outstandingCents: number;
@@ -64,12 +68,16 @@ export async function GET() {
         summaryByChargeId.get(row.charge_id) ??
         {
           totalAssigned: 0,
+          totalCents: 0,
+          paidCents: 0,
           unpaidCount: 0,
           overdueCount: 0,
           outstandingCents: 0,
         };
 
       current.totalAssigned += 1;
+      current.totalCents += typeof row.amount_cents === "number" ? row.amount_cents : 0;
+      current.paidCents += typeof row.paid_cents === "number" ? row.paid_cents : 0;
 
       const remaining = typeof row.remaining_cents === "number" ? row.remaining_cents : 0;
       if (remaining > 0) {
@@ -90,6 +98,8 @@ export async function GET() {
 
       const summary = summaryByChargeId.get(row.id) ?? {
         totalAssigned: 0,
+        totalCents: 0,
+        paidCents: 0,
         unpaidCount: 0,
         overdueCount: 0,
         outstandingCents: 0,

@@ -18,6 +18,7 @@ type BasicUser = {
 type BasicRole = {
   id: string;
   name: string;
+  type: string | null;
 };
 
 type UserRoleRow = {
@@ -58,6 +59,7 @@ function parseBasicRole(row: unknown): BasicRole | null {
   const value = row as {
     id?: unknown;
     name?: unknown;
+    type?: unknown;
   };
 
   if (typeof value.id !== "string") return null;
@@ -66,6 +68,7 @@ function parseBasicRole(row: unknown): BasicRole | null {
   return {
     id: value.id,
     name: value.name,
+    type: typeof value.type === "string" ? value.type : null,
   };
 }
 
@@ -172,7 +175,7 @@ export async function loadBasicUsersByIds(userIds: string[]) {
 export async function loadAllBasicRoles() {
   const { data, error } = await supabase
     .from("roles")
-    .select("id, name")
+    .select("id, name, type")
     .order("priority", { ascending: false })
     .order("name", { ascending: true });
 
