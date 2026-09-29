@@ -19,6 +19,7 @@ type ChargeSummaryRow = {
   charge_id: string | null;
   amount_cents: number | null;
   paid_cents: number | null;
+  payment_state: string | null;
   remaining_cents: number | null;
   is_overdue: boolean | null;
   user_id: string | null;
@@ -43,7 +44,7 @@ export async function GET() {
         .order("created_at", { ascending: false }),
       supabase
         .from("finance_obligation_balances")
-        .select("charge_id, amount_cents, paid_cents, remaining_cents, is_overdue, user_id"),
+        .select("charge_id, amount_cents, paid_cents, payment_state, remaining_cents, is_overdue, user_id"),
     ]);
 
     if (chargesRes.error) throw chargesRes.error;
@@ -75,9 +76,17 @@ export async function GET() {
           outstandingCents: 0,
         };
 
+      const rowPaid = typeof row.paid_cents === "number" ? row.paid_cents : 0;
+      const isExempt = row.payment_state === "exempt";
+
+      // Exempt obligations only count what was actually collected.
       current.totalAssigned += 1;
-      current.totalCents += typeof row.amount_cents === "number" ? row.amount_cents : 0;
-      current.paidCents += typeof row.paid_cents === "number" ? row.paid_cents : 0;
+      current.totalCents += isExempt
+        ? rowPaid
+        : typeof row.amount_cents === "number"
+          ? row.amount_cents
+          : 0;
+      current.paidCents += rowPaid;
 
       const remaining = typeof row.remaining_cents === "number" ? row.remaining_cents : 0;
       if (remaining > 0) {

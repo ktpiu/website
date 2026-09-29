@@ -37,8 +37,9 @@ type Recipient = {
   amountCents: number;
   paidCents: number;
   remainingCents: number;
-  paymentState: "paid" | "partial" | "unpaid";
+  paymentState: "paid" | "partial" | "unpaid" | "exempt";
   isOverdue: boolean;
+  isExempt: boolean;
 };
 
 type ChargeDetail = {
@@ -57,12 +58,13 @@ type ChargeDetail = {
   recipients: Recipient[];
 };
 
-type Filter = "all" | "unpaid" | "partial" | "paid";
+type Filter = "all" | "unpaid" | "partial" | "paid" | "exempt";
 
 const badgeClass: Record<Recipient["paymentState"], string> = {
   paid: "bg-emerald-100 text-emerald-900",
   partial: "bg-amber-100 text-amber-950",
   unpaid: "bg-muted text-foreground/80",
+  exempt: "bg-slate-200 text-slate-800",
 };
 
 export default function FinanceChargeDetailPage() {
@@ -78,6 +80,8 @@ export default function FinanceChargeDetailPage() {
   const [payAmount, setPayAmount] = useState("");
   const [payNotes, setPayNotes] = useState("");
   const [paying, setPaying] = useState(false);
+  const [exemptFor, setExemptFor] = useState<Recipient | null>(null);
+  const [exempting, setExempting] = useState(false);
 
   const load = useCallback(async () => {
     if (!canView) return;
@@ -99,7 +103,11 @@ export default function FinanceChargeDetailPage() {
 
   const summary = useMemo(() => {
     const recipients = detail?.recipients ?? [];
-    const total = recipients.reduce((s, r) => s + r.amountCents, 0);
+    // Exempt members only count what they actually paid.
+    const total = recipients.reduce(
+      (s, r) => s + (r.isExempt ? r.paidCents : r.amountCents),
+      0,
+    );
     const paid = recipients.reduce((s, r) => s + r.paidCents, 0);
     const count = (state: Recipient["paymentState"]) =>
       recipients.filter((r) => r.paymentState === state).length;
@@ -119,12 +127,13 @@ export default function FinanceChargeDetailPage() {
       paidCount: count("paid"),
       partialCount: count("partial"),
       unpaidCount: count("unpaid"),
+      exemptCount: count("exempt"),
       unsettled: recipients.filter((r) => r.remainingCents > 0).length,
     };
   }, [detail]);
 
   const rows = useMemo(() => {
-    const order = { unpaid: 0, partial: 1, paid: 2 } as const;
+    const order = { unpaid: 0, partial: 1, paid: 2, exempt: 3 } as const;
     return [...(detail?.recipients ?? [])]
       .filter((r) => filter === "all" || r.paymentState === filter)
       .sort(
@@ -176,6 +185,29 @@ export default function FinanceChargeDetailPage() {
     }
   };
 
+  const handleExempt = async (recipient: Recipient, exempt: boolean) => {
+    try {
+      setExempting(true);
+      const response = await fetch(
+        `/api/finance/admin/obligations/${recipient.obligationId}/exempt`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ exempt }),
+        },
+      );
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Failed to update exemption.");
+      toast.success(exempt ? `${recipient.name} exempted.` : "Exemption removed.");
+      setExemptFor(null);
+      await load();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to update exemption.");
+    } finally {
+      setExempting(false);
+    }
+  };
+
   if (!canView) {
     return (
       <div className="p-4 md:p-6">
@@ -216,6 +248,9 @@ export default function FinanceChargeDetailPage() {
     ["unpaid", "Unpaid", summary.unpaidCount],
     ["partial", "Partial", summary.partialCount],
     ["paid", "Paid", summary.paidCount],
+    ...(summary.exemptCount > 0
+      ? ([["exempt", "Exempt", summary.exemptCount]] as Array<[Filter, string, number]>)
+      : []),
   ];
 
   return (
@@ -328,8 +363,8 @@ export default function FinanceChargeDetailPage() {
         </div>
 
         <div className="overflow-x-auto">
-          <div className="min-w-[860px]">
-            <div className="grid grid-cols-[minmax(0,2.4fr)_100px_100px_100px_110px_140px] gap-4 border-b bg-muted/40 px-5 py-3 text-[12.5px] font-medium text-muted-foreground">
+          <div className="min-w-[960px]">
+            <div className="grid grid-cols-[minmax(0,2.2fr)_100px_100px_100px_110px_240px] gap-4 border-b bg-muted/40 px-5 py-3 text-[12.5px] font-medium text-muted-foreground">
               <span>Member</span>
               <span className="text-right">Amount</span>
               <span className="text-right">Paid</span>
@@ -340,7 +375,7 @@ export default function FinanceChargeDetailPage() {
             {rows.map((row) => (
               <div
                 key={row.obligationId}
-                className="grid min-h-11 grid-cols-[minmax(0,2.4fr)_100px_100px_100px_110px_140px] items-center gap-4 border-b px-5 py-2.5 last:border-b-0"
+                className="grid min-h-11 grid-cols-[minmax(0,2.2fr)_100px_100px_100px_110px_240px] items-center gap-4 border-b px-5 py-2.5 last:border-b-0"
               >
                 <div className="flex min-w-0 items-center gap-3">
                   <MemberAvatar name={row.name} src={row.avatar} />
@@ -349,7 +384,14 @@ export default function FinanceChargeDetailPage() {
                     <div className="truncate text-xs text-muted-foreground">{row.email}</div>
                   </div>
                 </div>
-                <span className="text-right text-sm">{formatCents(row.amountCents)}</span>
+                <span
+                  className={cn(
+                    "text-right text-sm",
+                    row.isExempt && "text-muted-foreground line-through",
+                  )}
+                >
+                  {formatCents(row.amountCents)}
+                </span>
                 <span className="text-right text-sm">{formatCents(row.paidCents)}</span>
                 <span className="text-right text-sm font-semibold">
                   {formatCents(row.remainingCents)}
@@ -364,16 +406,37 @@ export default function FinanceChargeDetailPage() {
                 >
                   {row.isOverdue && row.paymentState !== "paid" ? "Overdue" : row.paymentState}
                 </span>
-                <div className="flex justify-end">
-                  {row.remainingCents > 0 && (
+                <div className="flex justify-end gap-1.5">
+                  {row.isExempt ? (
                     <Button
                       size="sm"
                       variant="outline"
-                      disabled={!canEdit}
-                      onClick={() => openPayment(row)}
+                      disabled={!canEdit || exempting}
+                      onClick={() => void handleExempt(row, false)}
                     >
-                      Record payment
+                      Remove exemption
                     </Button>
+                  ) : (
+                    row.remainingCents > 0 && (
+                      <>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={!canEdit}
+                          onClick={() => openPayment(row)}
+                        >
+                          Record payment
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={!canEdit}
+                          onClick={() => setExemptFor(row)}
+                        >
+                          Exempt
+                        </Button>
+                      </>
+                    )
                   )}
                 </div>
               </div>
@@ -386,6 +449,34 @@ export default function FinanceChargeDetailPage() {
           </div>
         </div>
       </div>
+
+      <Dialog open={exemptFor !== null} onOpenChange={(open) => !open && setExemptFor(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Exempt {exemptFor?.name}?</DialogTitle>
+            <DialogDescription>
+              {exemptFor
+                ? `This removes ${formatCents(exemptFor.remainingCents)} from what's owed on ${charge.title} and from the transaction total.${
+                    exemptFor.paidCents > 0
+                      ? ` The ${formatCents(exemptFor.paidCents)} already paid stays recorded.`
+                      : ""
+                  } You can remove the exemption later.`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setExemptFor(null)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={exempting}
+              onClick={() => exemptFor && void handleExempt(exemptFor, true)}
+            >
+              {exempting ? "Exempting..." : "Exempt"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={payFor !== null} onOpenChange={(open) => !open && setPayFor(null)}>
         <DialogContent>

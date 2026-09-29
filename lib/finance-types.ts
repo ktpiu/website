@@ -1,4 +1,4 @@
-export type FinancePaymentState = "paid" | "partial" | "unpaid";
+export type FinancePaymentState = "paid" | "partial" | "unpaid" | "exempt";
 export type FinancePaymentSource = "stripe" | "manual";
 export type FinancePaymentStatus = "pending" | "completed" | "failed" | "canceled";
 export type FinanceAllocationMode = "auto_fifo" | "manual_selection";
@@ -46,6 +46,7 @@ export type FinanceObligationBalance = {
   remaining_cents: number;
   payment_state: FinancePaymentState;
   is_overdue: boolean;
+  exempted_at: string | null;
 };
 
 export type FinanceAllocationInput = {

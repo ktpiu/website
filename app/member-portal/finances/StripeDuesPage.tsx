@@ -47,7 +47,7 @@ type FinanceObligation = {
   amount_cents: number;
   paid_cents: number;
   remaining_cents: number;
-  payment_state: "paid" | "partial" | "unpaid";
+  payment_state: "paid" | "partial" | "unpaid" | "exempt";
   is_overdue: boolean;
   due_at: string | null;
   created_at: string;

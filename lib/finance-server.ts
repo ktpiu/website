@@ -125,10 +125,12 @@ function parseObligationBalance(row: unknown): FinanceObligationBalance | null {
     payment_state:
       value.payment_state === "paid" ||
       value.payment_state === "partial" ||
-      value.payment_state === "unpaid"
+      value.payment_state === "unpaid" ||
+      value.payment_state === "exempt"
         ? value.payment_state
         : "unpaid",
     is_overdue: value.is_overdue,
+    exempted_at: typeof value.exempted_at === "string" ? value.exempted_at : null,
   };
 }
 

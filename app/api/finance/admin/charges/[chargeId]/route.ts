@@ -90,6 +90,7 @@ export async function GET(
         remainingCents: obligation.remaining_cents,
         paymentState: obligation.payment_state,
         isOverdue: obligation.is_overdue,
+        isExempt: obligation.payment_state === "exempt",
         dueAt: obligation.due_at,
       };
     });

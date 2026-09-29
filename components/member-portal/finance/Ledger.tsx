@@ -19,7 +19,7 @@ export type LedgerChargeEntry = {
   remainingCents: number;
   dueAt: string | null;
   isOverdue: boolean;
-  paymentState: "paid" | "partial" | "unpaid";
+  paymentState: "paid" | "partial" | "unpaid" | "exempt";
 };
 
 export type LedgerPaymentEntry = {
