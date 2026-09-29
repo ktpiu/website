@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase-admin";
 import {
+  assertFinanceEditPermission,
   assertFinanceViewPermission,
   requireAppAuthContext,
   RouteAuthError,
@@ -176,6 +177,58 @@ export async function GET(
             ? error.message
             : "Failed to load finance charge details.",
       },
+      { status: 500 },
+    );
+  }
+}
+
+export async function PATCH(
+  req: NextRequest,
+  context: { params: Promise<{ chargeId: string }> },
+) {
+  try {
+    const authContext = await requireAppAuthContext();
+    assertFinanceEditPermission(authContext);
+
+    const { chargeId } = await context.params;
+    const body = (await req.json().catch(() => ({}))) as { dueAt?: unknown };
+
+    let dueAt: string | null = null;
+    if (typeof body.dueAt === "string" && body.dueAt.length > 0) {
+      const parsed = new Date(body.dueAt);
+      if (Number.isNaN(parsed.getTime())) {
+        return NextResponse.json({ error: "Invalid due date." }, { status: 400 });
+      }
+      dueAt = parsed.toISOString();
+    }
+
+    const { data, error } = await supabase
+      .from("finance_charges")
+      .update({ due_at: dueAt })
+      .eq("id", chargeId)
+      .select("id")
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) {
+      return NextResponse.json({ error: "Charge not found." }, { status: 404 });
+    }
+
+    // Obligations carry their own copy of the due date.
+    const { error: obligationError } = await supabase
+      .from("finance_obligations")
+      .update({ due_at: dueAt })
+      .eq("charge_id", chargeId);
+
+    if (obligationError) throw obligationError;
+
+    return NextResponse.json({ ok: true, dueAt }, { status: 200 });
+  } catch (error) {
+    if (error instanceof RouteAuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Failed to update due date." },
       { status: 500 },
     );
   }

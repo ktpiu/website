@@ -82,6 +82,9 @@ export default function FinanceChargeDetailPage() {
   const [paying, setPaying] = useState(false);
   const [exemptFor, setExemptFor] = useState<Recipient | null>(null);
   const [exempting, setExempting] = useState(false);
+  const [dueOpen, setDueOpen] = useState(false);
+  const [dueInput, setDueInput] = useState("");
+  const [savingDue, setSavingDue] = useState(false);
 
   const load = useCallback(async () => {
     if (!canView) return;
@@ -208,6 +211,38 @@ export default function FinanceChargeDetailPage() {
     }
   };
 
+  const openDueDialog = () => {
+    const current = detail?.charge.dueAt ? new Date(detail.charge.dueAt) : null;
+    setDueInput(
+      current && !Number.isNaN(current.getTime())
+        ? `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, "0")}-${String(current.getDate()).padStart(2, "0")}`
+        : "",
+    );
+    setDueOpen(true);
+  };
+
+  const handleSaveDue = async () => {
+    try {
+      setSavingDue(true);
+      const response = await fetch(`/api/finance/admin/charges/${chargeId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dueAt: dueInput ? new Date(`${dueInput}T23:59:00`).toISOString() : null,
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Failed to update due date.");
+      toast.success(dueInput ? "Due date updated." : "Due date removed.");
+      setDueOpen(false);
+      await load();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to update due date.");
+    } finally {
+      setSavingDue(false);
+    }
+  };
+
   if (!canView) {
     return (
       <div className="p-4 md:p-6">
@@ -270,6 +305,15 @@ export default function FinanceChargeDetailPage() {
         )}
         <div className="flex flex-wrap items-center gap-2 pt-1 text-[13px] text-muted-foreground">
           <span>{charge.dueAt ? `Due ${formatDate(charge.dueAt)}` : "No due date"}</span>
+          {canEdit && (
+            <button
+              type="button"
+              onClick={openDueDialog}
+              className="rounded-md px-1.5 py-0.5 text-[13px] font-medium text-foreground underline underline-offset-2 hover:bg-muted"
+            >
+              {charge.dueAt ? "Change" : "Set due date"}
+            </button>
+          )}
           {targets.includeRoles.map((role) => (
             <span
               key={role.roleId}
@@ -449,6 +493,34 @@ export default function FinanceChargeDetailPage() {
           </div>
         </div>
       </div>
+
+      <Dialog open={dueOpen} onOpenChange={setDueOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Due date</DialogTitle>
+            <DialogDescription>
+              Applies to everyone charged on {charge.title}. Leave blank for no due date.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            <Label htmlFor="due-date">Due date</Label>
+            <Input
+              id="due-date"
+              type="date"
+              value={dueInput}
+              onChange={(event) => setDueInput(event.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDueOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={() => void handleSaveDue()} disabled={savingDue}>
+              {savingDue ? "Saving..." : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={exemptFor !== null} onOpenChange={(open) => !open && setExemptFor(null)}>
         <DialogContent>
