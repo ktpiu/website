@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { toast } from "sonner";
@@ -76,8 +77,6 @@ export default function FinanceChargeDetailPage() {
   const canView = canViewFinanceAdmin(permissions);
   const canEdit = canEditFinanceAdmin(permissions);
 
-  const [detail, setDetail] = useState<ChargeDetail | null>(null);
-  const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<Filter>("all");
   const [payFor, setPayFor] = useState<Recipient | null>(null);
   const [payAmount, setPayAmount] = useState("");
@@ -92,23 +91,35 @@ export default function FinanceChargeDetailPage() {
   const [descInput, setDescInput] = useState("");
   const [savingDue, setSavingDue] = useState(false);
 
-  const load = useCallback(async () => {
-    if (!canView) return;
-    try {
+  const queryClient = useQueryClient();
+  const detailQuery = useQuery({
+    queryKey: ["finance", "charge", chargeId],
+    enabled: canView,
+    queryFn: async () => {
       const response = await fetch(`/api/finance/admin/charges/${chargeId}`);
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Failed to load transaction.");
-      setDetail(result as ChargeDetail);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to load transaction.");
-    } finally {
-      setLoading(false);
-    }
-  }, [canView, chargeId]);
+      return result as ChargeDetail;
+    },
+  });
+  const detail = detailQuery.data ?? null;
+  const loading = detailQuery.isPending && canView;
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (detailQuery.error) {
+      toast.error(
+        detailQuery.error instanceof Error
+          ? detailQuery.error.message
+          : "Failed to load transaction.",
+      );
+    }
+  }, [detailQuery.error]);
+
+  // Refreshes this transaction and the list/summary views behind it.
+  const load = useCallback(
+    () => queryClient.invalidateQueries({ queryKey: ["finance"] }),
+    [queryClient],
+  );
 
   const summary = useMemo(() => {
     const recipients = detail?.recipients ?? [];

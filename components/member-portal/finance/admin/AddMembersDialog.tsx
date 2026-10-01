@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -36,7 +37,17 @@ export function AddMembersDialog({
   defaultAmountCents: number | null;
   onAdded: () => void;
 }) {
-  const [members, setMembers] = useState<FinanceMember[] | null>(null);
+  const membersQuery = useQuery({
+    queryKey: ["finance", "members"],
+    enabled: open,
+    queryFn: async () => {
+      const response = await fetch("/api/finance/admin/members");
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Failed to load members.");
+      return result as { members: FinanceMember[] };
+    },
+  });
+  const members = membersQuery.data?.members ?? null;
   const [query, setQuery] = useState("");
   const [showInactive, setShowInactive] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -51,22 +62,6 @@ export function AddMembersDialog({
     setQuery("");
     setShowInactive(false);
     setBaseInput(defaultAmountCents ? String(defaultAmountCents / 100) : "");
-    if (members) return;
-
-    let cancelled = false;
-    fetch("/api/finance/admin/members")
-      .then(async (response) => {
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.error || "Failed to load members.");
-        if (!cancelled) setMembers(result.members ?? []);
-      })
-      .catch((error) => {
-        toast.error(error instanceof Error ? error.message : "Failed to load members.");
-        if (!cancelled) setMembers([]);
-      });
-    return () => {
-      cancelled = true;
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 

@@ -5,6 +5,7 @@ import { ProtectedRoute } from "@/components/auth/protected-route";
 import { MemberPortalSidebar } from "@/components/member-portal/sidebar";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { SidebarTrigger, SidebarProvider } from "@/components/ui/sidebar";
+import { QueryProvider } from "@/components/query-provider";
 import { Toaster } from "@/components/ui/sonner";
 
 type Props = {
@@ -14,6 +15,7 @@ type Props = {
 export default function MemberPortalLayout({ children }: Props) {
   return (
     <ProtectedRoute>
+      <QueryProvider>
       <SidebarProvider>
         <MemberPortalSidebar />
         <div className="flex flex-col w-full h-screen bg-muted/30">
@@ -33,6 +35,7 @@ export default function MemberPortalLayout({ children }: Props) {
         </div>
         <Toaster richColors />
       </SidebarProvider>
+      </QueryProvider>
     </ProtectedRoute>
   );
 }

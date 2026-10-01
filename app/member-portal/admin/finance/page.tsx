@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { toast } from "sonner";
 import { ChevronRight, Plus, Users } from "lucide-react";
@@ -35,42 +36,52 @@ export default function AdminFinancePage() {
   const canView = canViewFinanceAdmin(permissions);
   const canEdit = canEditFinanceAdmin(permissions);
 
-  const [loading, setLoading] = useState(true);
-  const [members, setMembers] = useState<FinanceMember[]>([]);
-  const [roles, setRoles] = useState<FinanceRole[]>([]);
-  const [charges, setCharges] = useState<ChargeSummary[]>([]);
+  const queryClient = useQueryClient();
   const [view, setView] = useState<"transactions" | "members">("transactions");
   const [tab, setTab] = useState<"outstanding" | "settled">("outstanding");
   const [showInactive, setShowInactive] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [enablingMemberId, setEnablingMemberId] = useState<string | null>(null);
 
-  const loadAll = useCallback(async () => {
-    if (!canView) return;
-    try {
-      const [membersRes, chargesRes] = await Promise.all([
-        fetch("/api/finance/admin/members"),
-        fetch("/api/finance/admin/charges"),
-      ]);
-      const [membersJson, chargesJson] = await Promise.all([
-        membersRes.json(),
-        chargesRes.json(),
-      ]);
-      if (!membersRes.ok) throw new Error(membersJson.error || "Failed to load members.");
-      if (!chargesRes.ok) throw new Error(chargesJson.error || "Failed to load transactions.");
-      setMembers(membersJson.members ?? []);
-      setRoles(membersJson.roles ?? []);
-      setCharges(chargesJson.charges ?? []);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to load finance data.");
-    } finally {
-      setLoading(false);
-    }
-  }, [canView]);
+  const membersQuery = useQuery({
+    queryKey: ["finance", "members"],
+    enabled: canView,
+    queryFn: async () => {
+      const response = await fetch("/api/finance/admin/members");
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Failed to load members.");
+      return result as { members: FinanceMember[]; roles: FinanceRole[] };
+    },
+  });
 
+  const chargesQuery = useQuery({
+    queryKey: ["finance", "charges"],
+    enabled: canView,
+    queryFn: async () => {
+      const response = await fetch("/api/finance/admin/charges");
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Failed to load transactions.");
+      return result as { charges: ChargeSummary[] };
+    },
+  });
+
+  const members = useMemo(() => membersQuery.data?.members ?? [], [membersQuery.data]);
+  const roles = useMemo(() => membersQuery.data?.roles ?? [], [membersQuery.data]);
+  const charges = useMemo(() => chargesQuery.data?.charges ?? [], [chargesQuery.data]);
+  // Only show the skeleton on the very first load; cached data renders instantly.
+  const loading = membersQuery.isPending || chargesQuery.isPending;
+
+  const loadError = membersQuery.error ?? chargesQuery.error;
   useEffect(() => {
-    void loadAll();
-  }, [loadAll]);
+    if (loadError) {
+      toast.error(loadError instanceof Error ? loadError.message : "Failed to load finance data.");
+    }
+  }, [loadError]);
+
+  const loadAll = useCallback(
+    () => queryClient.invalidateQueries({ queryKey: ["finance"] }),
+    [queryClient],
+  );
 
   const handleEnableMember = async (userId: string) => {
     try {
