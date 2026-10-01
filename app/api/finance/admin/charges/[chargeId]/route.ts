@@ -191,20 +191,47 @@ export async function PATCH(
     assertFinanceEditPermission(authContext);
 
     const { chargeId } = await context.params;
-    const body = (await req.json().catch(() => ({}))) as { dueAt?: unknown };
+    const body = (await req.json().catch(() => ({}))) as {
+      title?: unknown;
+      description?: unknown;
+      dueAt?: unknown;
+    };
 
-    let dueAt: string | null = null;
-    if (typeof body.dueAt === "string" && body.dueAt.length > 0) {
-      const parsed = new Date(body.dueAt);
-      if (Number.isNaN(parsed.getTime())) {
-        return NextResponse.json({ error: "Invalid due date." }, { status: 400 });
+    const updates: Record<string, string | null> = {};
+
+    if (body.title !== undefined) {
+      const title = typeof body.title === "string" ? body.title.trim() : "";
+      if (!title) {
+        return NextResponse.json({ error: "Title is required." }, { status: 400 });
       }
-      dueAt = parsed.toISOString();
+      updates.title = title;
+    }
+
+    if (body.description !== undefined) {
+      const description = typeof body.description === "string" ? body.description.trim() : "";
+      updates.description = description.length > 0 ? description : null;
+    }
+
+    let dueAt: string | null | undefined;
+    if (body.dueAt !== undefined) {
+      dueAt = null;
+      if (typeof body.dueAt === "string" && body.dueAt.length > 0) {
+        const parsed = new Date(body.dueAt);
+        if (Number.isNaN(parsed.getTime())) {
+          return NextResponse.json({ error: "Invalid due date." }, { status: 400 });
+        }
+        dueAt = parsed.toISOString();
+      }
+      updates.due_at = dueAt;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return NextResponse.json({ error: "Nothing to update." }, { status: 400 });
     }
 
     const { data, error } = await supabase
       .from("finance_charges")
-      .update({ due_at: dueAt })
+      .update(updates)
       .eq("id", chargeId)
       .select("id")
       .maybeSingle();
@@ -215,20 +242,22 @@ export async function PATCH(
     }
 
     // Obligations carry their own copy of the due date.
-    const { error: obligationError } = await supabase
-      .from("finance_obligations")
-      .update({ due_at: dueAt })
-      .eq("charge_id", chargeId);
+    if (dueAt !== undefined) {
+      const { error: obligationError } = await supabase
+        .from("finance_obligations")
+        .update({ due_at: dueAt })
+        .eq("charge_id", chargeId);
 
-    if (obligationError) throw obligationError;
+      if (obligationError) throw obligationError;
+    }
 
-    return NextResponse.json({ ok: true, dueAt }, { status: 200 });
+    return NextResponse.json({ ok: true }, { status: 200 });
   } catch (error) {
     if (error instanceof RouteAuthError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to update due date." },
+      { error: error instanceof Error ? error.message : "Failed to update transaction." },
       { status: 500 },
     );
   }

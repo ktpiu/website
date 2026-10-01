@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { toast } from "sonner";
-import { ArrowLeft, Plus } from "lucide-react";
+import { ArrowLeft, Pencil, Plus } from "lucide-react";
 import { useAuthStore } from "@/lib/auth-store";
 import { canEditFinanceAdmin, canViewFinanceAdmin } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
   formatCents,
@@ -87,6 +88,8 @@ export default function FinanceChargeDetailPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [dueOpen, setDueOpen] = useState(false);
   const [dueInput, setDueInput] = useState("");
+  const [titleInput, setTitleInput] = useState("");
+  const [descInput, setDescInput] = useState("");
   const [savingDue, setSavingDue] = useState(false);
 
   const load = useCallback(async () => {
@@ -221,6 +224,8 @@ export default function FinanceChargeDetailPage() {
         ? `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, "0")}-${String(current.getDate()).padStart(2, "0")}`
         : "",
     );
+    setTitleInput(detail?.charge.title ?? "");
+    setDescInput(detail?.charge.description ?? "");
     setDueOpen(true);
   };
 
@@ -231,16 +236,18 @@ export default function FinanceChargeDetailPage() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          title: titleInput,
+          description: descInput,
           dueAt: dueInput ? new Date(`${dueInput}T23:59:00`).toISOString() : null,
         }),
       });
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "Failed to update due date.");
-      toast.success(dueInput ? "Due date updated." : "Due date removed.");
+      if (!response.ok) throw new Error(result.error || "Failed to update transaction.");
+      toast.success("Transaction updated.");
       setDueOpen(false);
       await load();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to update due date.");
+      toast.error(error instanceof Error ? error.message : "Failed to update transaction.");
     } finally {
       setSavingDue(false);
     }
@@ -302,7 +309,15 @@ export default function FinanceChargeDetailPage() {
       </Link>
 
       <div className="space-y-2">
-        <h1 className="text-2xl font-bold tracking-tight md:text-3xl">{charge.title}</h1>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h1 className="text-2xl font-bold tracking-tight md:text-3xl">{charge.title}</h1>
+          {canEdit && (
+            <Button variant="outline" className="h-11" onClick={openDueDialog}>
+              <Pencil className="size-4" />
+              Edit details
+            </Button>
+          )}
+        </div>
         {charge.description && (
           <p className="text-[14.5px] text-muted-foreground">{charge.description}</p>
         )}
@@ -516,13 +531,32 @@ export default function FinanceChargeDetailPage() {
       <Dialog open={dueOpen} onOpenChange={setDueOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Due date</DialogTitle>
+            <DialogTitle>Edit transaction</DialogTitle>
             <DialogDescription>
-              Applies to everyone charged on {charge.title}. Leave blank for no due date.
+              Changes apply to everyone charged. Amounts are edited per member.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-1.5">
-            <Label htmlFor="due-date">Due date</Label>
+            <Label htmlFor="edit-title">Title</Label>
+            <Input
+              id="edit-title"
+              value={titleInput}
+              onChange={(event) => setTitleInput(event.target.value)}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="edit-desc">Description</Label>
+            <Textarea
+              id="edit-desc"
+              value={descInput}
+              onChange={(event) => setDescInput(event.target.value)}
+              className="h-20 resize-none"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="due-date">
+              Due date <span className="font-normal text-muted-foreground">(optional)</span>
+            </Label>
             <Input
               id="due-date"
               type="date"
@@ -534,7 +568,7 @@ export default function FinanceChargeDetailPage() {
             <Button variant="outline" onClick={() => setDueOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={() => void handleSaveDue()} disabled={savingDue}>
+            <Button onClick={() => void handleSaveDue()} disabled={savingDue || !titleInput.trim()}>
               {savingDue ? "Saving..." : "Save"}
             </Button>
           </DialogFooter>
