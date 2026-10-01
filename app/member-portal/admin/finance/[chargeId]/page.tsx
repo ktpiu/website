@@ -64,6 +64,8 @@ type ChargeDetail = {
 
 type Filter = "all" | "unpaid" | "partial" | "paid" | "exempt";
 
+const PAGE_SIZE = 50;
+
 const badgeClass: Record<Recipient["paymentState"], string> = {
   paid: "bg-emerald-100 text-emerald-900",
   partial: "bg-amber-100 text-amber-950",
@@ -78,6 +80,7 @@ export default function FinanceChargeDetailPage() {
   const canEdit = canEditFinanceAdmin(permissions);
 
   const [filter, setFilter] = useState<Filter>("all");
+  const [page, setPage] = useState(0);
   const [payFor, setPayFor] = useState<Recipient | null>(null);
   const [payAmount, setPayAmount] = useState("");
   const [payNotes, setPayNotes] = useState("");
@@ -161,6 +164,11 @@ export default function FinanceChargeDetailPage() {
           order[a.paymentState] - order[b.paymentState] || a.name.localeCompare(b.name),
       );
   }, [detail, filter]);
+
+  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount - 1);
+  const pageStart = safePage * PAGE_SIZE;
+  const pageRows = rows.slice(pageStart, pageStart + PAGE_SIZE);
 
   const openPayment = (recipient: Recipient) => {
     setPayFor(recipient);
@@ -420,7 +428,10 @@ export default function FinanceChargeDetailPage() {
                 key={value}
                 type="button"
                 aria-pressed={filter === value}
-                onClick={() => setFilter(value)}
+                onClick={() => {
+                  setFilter(value);
+                  setPage(0);
+                }}
                 className={cn(
                   "rounded-md px-3.5 py-1.5 text-[13.5px] font-medium",
                   filter === value ? "bg-background font-semibold shadow-sm" : "text-muted-foreground",
@@ -430,9 +441,6 @@ export default function FinanceChargeDetailPage() {
               </button>
             ))}
           </div>
-          <span className="text-[13px] text-muted-foreground">
-            Showing {rows.length} of {detail.recipients.length} members
-          </span>
           {canEdit && (
             <Button size="sm" variant="outline" onClick={() => setAddOpen(true)}>
               <Plus className="size-4" />
@@ -451,7 +459,7 @@ export default function FinanceChargeDetailPage() {
               <span>Status</span>
               <span />
             </div>
-            {rows.map((row) => (
+            {pageRows.map((row) => (
               <div
                 key={row.obligationId}
                 className="grid min-h-11 grid-cols-[minmax(0,2.2fr)_100px_100px_100px_110px_240px] items-center gap-4 border-b px-5 py-2.5 last:border-b-0"
@@ -527,6 +535,37 @@ export default function FinanceChargeDetailPage() {
             )}
           </div>
         </div>
+
+        {rows.length > 0 && (
+          <div className="flex items-center justify-between border-t px-5 py-3">
+            <span className="text-[13px] text-muted-foreground">
+              Showing {pageStart + 1}–{pageStart + pageRows.length} of {rows.length} members
+            </span>
+            {pageCount > 1 && (
+              <div className="flex items-center gap-2">
+                <span className="text-[13px] text-muted-foreground">
+                  Page {safePage + 1} of {pageCount}
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={safePage === 0}
+                  onClick={() => setPage(safePage - 1)}
+                >
+                  Previous
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={safePage >= pageCount - 1}
+                  onClick={() => setPage(safePage + 1)}
+                >
+                  Next
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <AddMembersDialog
