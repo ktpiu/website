@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { MemberAvatar } from "./MemberAvatar";
 import { cn } from "@/lib/utils";
@@ -58,6 +59,7 @@ export function CreateTransactionDialog({
   const [dueAt, setDueAt] = useState("");
   const [baseInput, setBaseInput] = useState("");
   const [query, setQuery] = useState("");
+  const [showInactive, setShowInactive] = useState(false);
   const [selection, setSelection] = useState<Record<string, Mode>>({});
   const [groupAmounts, setGroupAmounts] = useState<Record<string, string>>({});
   const [userAmounts, setUserAmounts] = useState<Record<string, string>>({});
@@ -120,6 +122,7 @@ export function CreateTransactionDialog({
         key: `u:${member.id}`,
         label: member.name,
         hint: [member.pledgeClass, memberStatus(member)].filter(Boolean).join(" · "),
+        hiddenByDefault: member.isAlumni || member.isDisaffiliated,
         test: (m: FinanceMember) => m.id === member.id,
       })),
     [members],
@@ -136,7 +139,11 @@ export function CreateTransactionDialog({
     (group) => !normalizedQuery || group.label.toLowerCase().includes(normalizedQuery),
   );
   const visibleMembers = normalizedQuery
-    ? memberOptions.filter((option) => option.label.toLowerCase().includes(normalizedQuery))
+    ? memberOptions.filter(
+        (option) =>
+          option.label.toLowerCase().includes(normalizedQuery) &&
+          (showInactive || !option.hiddenByDefault || selection[option.key]),
+      )
     : [];
   const visibleOptions = [...visibleGroups, ...visibleMembers];
 
@@ -364,7 +371,13 @@ export function CreateTransactionDialog({
                     className="h-11 flex-1 bg-transparent text-sm outline-none"
                   />
                 </div>
-                <div className="h-52 overflow-y-auto">
+                <div className="flex justify-end border-b px-3 py-1.5">
+                  <label htmlFor="tx-show-inactive" className="flex cursor-pointer items-center gap-2 text-[13px] text-muted-foreground">
+  <Switch id="tx-show-inactive" size="sm" checked={showInactive} onCheckedChange={setShowInactive} />
+  Show alumni &amp; disaffiliated
+</label>
+                </div>
+                <div className="h-44 overflow-y-auto">
                   {visibleOptions.map((option) => (
                     <div
                       key={option.key}

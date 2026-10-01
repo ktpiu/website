@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { toast } from "sonner";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Plus } from "lucide-react";
 import { useAuthStore } from "@/lib/auth-store";
 import { canEditFinanceAdmin, canViewFinanceAdmin } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,7 @@ import {
   formatDate,
   parseDollarsToCents,
 } from "@/components/member-portal/finance/admin/shared";
+import { AddMembersDialog } from "@/components/member-portal/finance/admin/AddMembersDialog";
 import { MemberAvatar } from "@/components/member-portal/finance/admin/MemberAvatar";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
@@ -48,6 +49,7 @@ type ChargeDetail = {
     title: string;
     description: string | null;
     dueAt: string | null;
+    defaultAmountCents: number | null;
   };
   targets: {
     includeRoles: Array<{ roleId: string; roleName: string; amountCents: number | null }>;
@@ -82,6 +84,7 @@ export default function FinanceChargeDetailPage() {
   const [paying, setPaying] = useState(false);
   const [exemptFor, setExemptFor] = useState<Recipient | null>(null);
   const [exempting, setExempting] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
   const [dueOpen, setDueOpen] = useState(false);
   const [dueInput, setDueInput] = useState("");
   const [savingDue, setSavingDue] = useState(false);
@@ -404,6 +407,12 @@ export default function FinanceChargeDetailPage() {
           <span className="text-[13px] text-muted-foreground">
             Showing {rows.length} of {detail.recipients.length} members
           </span>
+          {canEdit && (
+            <Button size="sm" variant="outline" onClick={() => setAddOpen(true)}>
+              <Plus className="size-4" />
+              Add members
+            </Button>
+          )}
         </div>
 
         <div className="overflow-x-auto">
@@ -493,6 +502,16 @@ export default function FinanceChargeDetailPage() {
           </div>
         </div>
       </div>
+
+      <AddMembersDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        chargeId={charge.id}
+        chargeTitle={charge.title}
+        existingUserIds={detail.recipients.map((r) => r.userId)}
+        defaultAmountCents={charge.defaultAmountCents}
+        onAdded={() => void load()}
+      />
 
       <Dialog open={dueOpen} onOpenChange={setDueOpen}>
         <DialogContent>

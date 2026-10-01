@@ -9,6 +9,7 @@ import { canEditFinanceAdmin, canViewFinanceAdmin } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -40,6 +41,7 @@ export default function AdminFinancePage() {
   const [charges, setCharges] = useState<ChargeSummary[]>([]);
   const [view, setView] = useState<"transactions" | "members">("transactions");
   const [tab, setTab] = useState<"outstanding" | "settled">("outstanding");
+  const [showInactive, setShowInactive] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [enablingMemberId, setEnablingMemberId] = useState<string | null>(null);
 
@@ -345,7 +347,13 @@ export default function AdminFinancePage() {
         </>
       ) : (
         <Card>
-          <CardContent className="pt-6">
+          <CardContent className="space-y-4 pt-6">
+            <div className="flex justify-end">
+              <label htmlFor="members-show-inactive" className="flex cursor-pointer items-center gap-2 text-[13px] text-muted-foreground">
+  <Switch id="members-show-inactive" size="sm" checked={showInactive} onCheckedChange={setShowInactive} />
+  Show alumni &amp; disaffiliated
+</label>
+            </div>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -358,7 +366,9 @@ export default function AdminFinancePage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {members.map((member) => (
+                {members
+                  .filter((m) => showInactive || !(m.isAlumni || m.isDisaffiliated))
+                  .map((member) => (
                   <TableRow key={member.id}>
                     <TableCell>
                       <div className="font-medium">{member.name}</div>
