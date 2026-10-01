@@ -1,5 +1,6 @@
 "use client";
 
+import { ALLOW_PARTIAL_PAYMENTS } from "@/lib/finance-config";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { TriangleAlert } from "lucide-react";
@@ -238,7 +239,7 @@ export default function StripeDuesPage() {
       const input = selectedAmounts[obligationId] ?? "";
       const parsed = parseDollarsToCents(input);
       const amountCents =
-        parsed && parsed > 0
+        ALLOW_PARTIAL_PAYMENTS && parsed && parsed > 0
           ? Math.min(parsed, obligation.remaining_cents)
           : obligation.remaining_cents;
 
@@ -541,6 +542,9 @@ export default function StripeDuesPage() {
             <DialogDescription>
               Pay the full outstanding balance or select specific charges to
               pay.
+              {ALLOW_PARTIAL_PAYMENTS
+                ? ""
+                : " Partial payments are temporarily unavailable; each charge is paid in full."}
             </DialogDescription>
           </DialogHeader>
 
@@ -618,6 +622,12 @@ export default function StripeDuesPage() {
                             step="0.01"
                             className="h-8 w-28"
                             disabled={!checked}
+                            readOnly={!ALLOW_PARTIAL_PAYMENTS}
+                            title={
+                              ALLOW_PARTIAL_PAYMENTS
+                                ? undefined
+                                : "Partial payments are temporarily disabled"
+                            }
                             placeholder="Amount"
                             value={selectedAmounts[obligation.id] ?? ""}
                             onChange={(e) =>

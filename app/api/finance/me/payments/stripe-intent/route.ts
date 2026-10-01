@@ -9,6 +9,7 @@ import {
   ensureFinanceCustomerForUser,
   loadObligationBalancesForUser,
 } from "@/lib/finance-server";
+import { ALLOW_PARTIAL_PAYMENTS } from "@/lib/finance-config";
 import {
   allocateByFifo,
   getAllocationsTotal,
@@ -85,6 +86,26 @@ export async function POST(req: NextRequest) {
           });
 
     const amountCents = getAllocationsTotal(allocations);
+
+    if (!ALLOW_PARTIAL_PAYMENTS) {
+      const remainingById = new Map(
+        obligations.map((obligation) => [obligation.id, obligation.remaining_cents]),
+      );
+      const isPartial =
+        allocations.some(
+          (allocation) => allocation.amountCents !== remainingById.get(allocation.obligationId),
+        ) ||
+        (allocationMode === "auto_fifo" &&
+          amountCents !==
+            obligations.reduce((sum, obligation) => sum + obligation.remaining_cents, 0));
+
+      if (isPartial) {
+        return NextResponse.json(
+          { error: "Partial payments are temporarily disabled. Pay each charge in full." },
+          { status: 400 },
+        );
+      }
+    }
 
     if (amountCents <= 0) {
       return NextResponse.json(
