@@ -57,15 +57,15 @@ export function SlotGrid<T extends GridSlot>({
   };
 
   return (
-    <div className="overflow-x-auto rounded-lg border">
+    <div className="max-h-[75vh] overflow-auto rounded-lg border">
       <table className="w-full border-collapse text-sm">
         <thead>
           <tr className="bg-muted/50">
-            <th className="sticky left-0 z-10 min-w-28 border-b bg-muted px-3 py-2 text-left text-xs font-medium text-muted-foreground">
+            <th className="sticky left-0 top-0 z-30 min-w-36 border-b bg-muted px-3 py-2 text-left text-xs font-medium text-muted-foreground">
               {layout === "time_rows" ? "Time" : "Location"}
             </th>
             {cols.map(([key, sample]) => (
-              <th key={String(key)} className="min-w-48 border-b border-l px-3 py-2 text-left text-xs font-semibold">
+              <th key={String(key)} className="sticky top-0 z-20 min-w-64 border-b border-l bg-muted px-3 py-2 text-left text-xs font-semibold">
                 {header(String(key), sample, layout !== "time_rows")}
               </th>
             ))}

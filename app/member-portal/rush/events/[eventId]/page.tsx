@@ -95,6 +95,7 @@ export default function RushEventDetailPage({ params }: { params: Promise<{ even
 
   const [form, setForm] = useState<EventFormValues | null>(null);
   const [presentOpen, setPresentOpen] = useState(false);
+  const [tab, setTab] = useState<string | null>(null);
   const [axisDialog, setAxisDialog] = useState<AxisDialog | null>(null);
   const [allocateDialog, setAllocateDialog] = useState<AllocateDialog | null>(null);
   const [manualPnmId, setManualPnmId] = useState("");
@@ -233,7 +234,7 @@ export default function RushEventDetailPage({ params }: { params: Promise<{ even
   };
 
   return (
-    <div className="mx-auto max-w-5xl space-y-4 pb-10">
+    <div className={cn("mx-auto space-y-4 pb-10", tab === "slots" ? "max-w-none" : "max-w-5xl")}>
       <Button asChild variant="ghost" size="sm" className="-ml-2 mt-1">
         <Link href="/member-portal/rush/events">
           <ArrowLeft className="mr-1 h-4 w-4" /> All events
@@ -252,7 +253,7 @@ export default function RushEventDetailPage({ params }: { params: Promise<{ even
         </Button>
       </div>
 
-      <Tabs defaultValue={event.attendanceEnabled ? "checkin" : "attendance"}>
+      <Tabs value={tab ?? (event.attendanceEnabled ? "checkin" : "attendance")} onValueChange={setTab}>
         <TabsList className="flex-wrap">
           {event.attendanceEnabled ? <TabsTrigger value="checkin">Check-in</TabsTrigger> : null}
           <TabsTrigger value="attendance">
