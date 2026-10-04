@@ -12,6 +12,18 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { ThemeToggle } from "@/components/theme-toggle";
 
+/** Same-origin redirect_url from Clerk's protect() redirect, else the portal. */
+function getRedirectPath() {
+  const raw = new URLSearchParams(window.location.search).get("redirect_url");
+  if (!raw) return "/member-portal";
+  try {
+    const url = new URL(raw, window.location.origin);
+    return url.origin === window.location.origin ? url.pathname + url.search : "/member-portal";
+  } catch {
+    return "/member-portal";
+  }
+}
+
 export default function SignInPage() {
   const { isLoaded, signIn, setActive } = useSignIn();
   const { theme } = useTheme();
@@ -42,7 +54,7 @@ export default function SignInPage() {
 
       if (result.status === "complete") {
         await setActive({ session: result.createdSessionId });
-        router.push("/member-portal");
+        router.push(getRedirectPath());
       }
     } catch (err) {
       const error = err as { errors?: { message: string }[] };

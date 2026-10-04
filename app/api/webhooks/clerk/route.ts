@@ -27,7 +27,13 @@ type ClerkUserData = {
   username?: string | null;
   primary_email_address_id?: string | null;
   email_addresses?: ClerkEmailAddress[];
+  public_metadata?: Record<string, unknown> | null;
 };
+
+/** Rush candidates' accounts never link to (or wait on) a member profile. */
+function isPnmAccount(user: ClerkUserData) {
+  return user.public_metadata?.accountType === "pnm";
+}
 
 function getPrimaryEmail(user: ClerkUserData) {
   const addresses = user.email_addresses ?? [];
@@ -53,6 +59,9 @@ export async function POST(request: NextRequest) {
     switch (event.type) {
       case "user.created": {
         const user = event.data as ClerkUserData;
+        if (isPnmAccount(user)) {
+          return NextResponse.json({ ok: true, skipped: "pnm account" });
+        }
         const email = getPrimaryEmail(user);
         if (!email) {
           console.warn("Clerk user.created without an email address:", user.id);
@@ -76,6 +85,9 @@ export async function POST(request: NextRequest) {
         // Keep the profile's email in sync with the Clerk primary email so
         // sign-in, email matching and admin lookups keep working after a change.
         const user = event.data as ClerkUserData;
+        if (isPnmAccount(user)) {
+          return NextResponse.json({ ok: true, skipped: "pnm account" });
+        }
         const email = getPrimaryEmail(user);
         if (!email) {
           return NextResponse.json({ ok: true, skipped: "no email" });

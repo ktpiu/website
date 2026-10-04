@@ -270,6 +270,53 @@ export async function provisionAppUser({
   return { user, created };
 }
 
+/**
+ * Creates (or reuses) a profile for an email with no Clerk account linked yet,
+ * e.g. a PNM who just became a pledge. Their first sign-in links it through
+ * the email match in resolveAppUser().
+ */
+export async function preprovisionAppUserByEmail({
+  email,
+  name,
+  roleIds = [],
+}: {
+  email: string;
+  name?: string | null;
+  roleIds?: string[];
+}): Promise<SupabaseUser> {
+  const normalizedEmail = normalizeEmail(email);
+  let user = await findAppUserByEmail(normalizedEmail);
+
+  if (!user) {
+    const payload = buildNewUserPayload({
+      clerkUserId: "",
+      email: normalizedEmail,
+      name: normalizeName(name, normalizedEmail),
+    });
+    payload.clerk_user_id = null;
+
+    const { data, error } = await supabaseAdmin.from("users").insert(payload).select("*").single();
+    if (error?.code === UNIQUE_VIOLATION) {
+      user = await findAppUserByEmail(normalizedEmail);
+    } else if (error) {
+      throw error;
+    } else {
+      user = data as SupabaseUser;
+    }
+    if (!user) throw new Error(`Failed to create a profile for ${normalizedEmail}.`);
+  }
+
+  if (roleIds.length > 0) {
+    const { error } = await supabaseAdmin.from("user_roles").upsert(
+      roleIds.map((roleId) => ({ user_id: user!.id, role_id: roleId })),
+      { onConflict: "user_id,role_id", ignoreDuplicates: true },
+    );
+    if (error) throw error;
+  }
+
+  return user;
+}
+
 export async function denyAppUserAccess({
   clerkUserId,
   email,

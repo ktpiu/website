@@ -7,12 +7,14 @@ type User = SupabaseUser;
  * Why the signed-in Clerk account is not authorized for the portal.
  * "pending": no profile yet, waiting on an admin. "denied": an admin declined.
  * "disaffiliated": an admin marked the member as dropped/disaffiliated.
+ * "pnm": a rush candidate's account, which belongs in /rush/portal.
  * "error": the server could not resolve the account.
  */
 export type AuthStatus =
   | "pending"
   | "denied"
   | "disaffiliated"
+  | "pnm"
   | "error"
   | null;
 

@@ -4,6 +4,9 @@ import {
   ADMIN_FINANCE_VIEW,
   ADMIN_USERS_EDIT,
   ADMIN_VIEW,
+  RUSH_DELIBERATION_MANAGE,
+  RUSH_MANAGE,
+  RUSH_VIEW,
   fetchUserPermissionKeys,
 } from "@/lib/permissions";
 import { resolveAppUser } from "@/lib/app-user";
@@ -23,13 +26,19 @@ export type AppAuthContext = {
   permissions: Set<string>;
 };
 
-/** Why a signed-in Clerk account has no portal access. */
-export type AccessStatus = "pending" | "denied" | "disaffiliated";
+/**
+ * Why a signed-in Clerk account has no portal access. "pnm" is a rush
+ * candidate's account: it belongs in /rush/portal, never the member portal.
+ */
+export type AccessStatus = "pending" | "denied" | "disaffiliated" | "pnm";
 
 export const PENDING_APPROVAL_MESSAGE =
   "Your account is waiting for an administrator to approve it.";
 export const ACCESS_DENIED_MESSAGE =
   "An administrator has declined portal access for this account.";
+
+export const PNM_ACCOUNT_MESSAGE =
+  "This is a rush account. Head to the rush portal to see your events.";
 
 export const DISAFFILIATED_MESSAGE =
   "This account is no longer affiliated with KTP and cannot access the member portal.";
@@ -116,7 +125,61 @@ export async function getSignedInIdentity() {
  * loads the user's permission keys. Throws a 403 tagged "pending", "denied" or "disaffiliated"
  * when the account has not been approved. Runs with the Supabase secret key.
  */
-export async function requireAppAuthContext(): Promise<AppAuthContext> {
+/**
+ * Short per-instance cache so a page that fires several API calls at once
+ * resolves the member once. Permission or affiliation changes take effect
+ * within CONTEXT_TTL_MS; /api/auth/me always reads fresh.
+ */
+const CONTEXT_TTL_MS = 10_000;
+const contextCache = new Map<string, { value: AppAuthContext; expires: number }>();
+
+function cacheContext(clerkUserId: string, value: AppAuthContext) {
+  if (contextCache.size > 1000) contextCache.clear();
+  contextCache.set(clerkUserId, { value, expires: Date.now() + CONTEXT_TTL_MS });
+  return value;
+}
+
+/** Fast path: one RPC returns the linked profile and its permission keys. */
+async function loadLinkedContext(clerkUserId: string) {
+  const { data, error } = await supabaseAdmin.rpc("app_user_context", {
+    p_clerk_user_id: clerkUserId,
+  });
+  if (error) throw new RouteAuthError(500, error.message || "Failed to load user context.");
+  const row = data as { user: SupabaseUser; permissions: string[] } | null;
+  return row?.user ? row : null;
+}
+
+function buildContext(profile: SupabaseUser, permissionKeys: string[]): AppAuthContext {
+  if (profile.is_disaffiliated) {
+    throw new RouteAuthError(403, DISAFFILIATED_MESSAGE, "disaffiliated");
+  }
+  const appUser = parseAppUser(profile);
+  if (!appUser) {
+    throw new RouteAuthError(403, "Not authorized for this application.");
+  }
+  return { appUser, profile, permissions: new Set(permissionKeys) };
+}
+
+export async function requireAppAuthContext(
+  options: { fresh?: boolean } = {},
+): Promise<AppAuthContext> {
+  const { userId } = await auth();
+  if (!userId) {
+    throw new RouteAuthError(401, "Unauthorized.");
+  }
+
+  if (!options.fresh) {
+    const cached = contextCache.get(userId);
+    if (cached && cached.expires > Date.now()) return cached.value;
+  }
+
+  // Already-linked members (nearly every request) skip the Clerk API call.
+  const linked = await loadLinkedContext(userId);
+  if (linked) {
+    return cacheContext(userId, buildContext(linked.user, linked.permissions));
+  }
+
+  // Slow path: first sign-in (link by email), pending, denied or a PNM account.
   const identity = await getSignedInIdentity();
   if (!identity) {
     throw new RouteAuthError(401, "Unauthorized.");
@@ -126,13 +189,18 @@ export async function requireAppAuthContext(): Promise<AppAuthContext> {
   try {
     const resolved = await resolveAppUser(identity);
     if (resolved.status === "pending") {
+      const { data: pnm } = await supabaseAdmin
+        .from("pnms")
+        .select("id")
+        .eq("clerk_user_id", identity.clerkUserId)
+        .maybeSingle();
+      if (pnm) {
+        throw new RouteAuthError(403, PNM_ACCOUNT_MESSAGE, "pnm");
+      }
       throw new RouteAuthError(403, PENDING_APPROVAL_MESSAGE, "pending");
     }
     if (resolved.status === "denied") {
       throw new RouteAuthError(403, ACCESS_DENIED_MESSAGE, "denied");
-    }
-    if (resolved.user.is_disaffiliated) {
-      throw new RouteAuthError(403, DISAFFILIATED_MESSAGE, "disaffiliated");
     }
     profile = resolved.user;
   } catch (error) {
@@ -144,18 +212,8 @@ export async function requireAppAuthContext(): Promise<AppAuthContext> {
     throw new RouteAuthError(500, message);
   }
 
-  const appUser = parseAppUser(profile);
-  if (!appUser) {
-    throw new RouteAuthError(403, "Not authorized for this application.");
-  }
-
-  const permissionKeys = await fetchUserPermissionKeys(appUser.id, supabaseAdmin);
-
-  return {
-    appUser,
-    profile,
-    permissions: new Set(permissionKeys),
-  };
+  const permissionKeys = await fetchUserPermissionKeys(profile.id, supabaseAdmin);
+  return cacheContext(userId, buildContext(profile, permissionKeys));
 }
 
 export function assertFinanceViewPermission(context: AppAuthContext) {
@@ -182,5 +240,23 @@ export function assertAdminViewPermission(context: AppAuthContext) {
 export function assertUsersEditPermission(context: AppAuthContext) {
   if (!context.permissions.has(ADMIN_USERS_EDIT)) {
     throw new RouteAuthError(403, "Missing user admin edit permission.");
+  }
+}
+
+export function assertRushViewPermission(context: AppAuthContext) {
+  if (!context.permissions.has(RUSH_VIEW) && !context.permissions.has(RUSH_MANAGE)) {
+    throw new RouteAuthError(403, "Missing rush view permission.");
+  }
+}
+
+export function assertRushManagePermission(context: AppAuthContext) {
+  if (!context.permissions.has(RUSH_MANAGE)) {
+    throw new RouteAuthError(403, "Missing rush manage permission.");
+  }
+}
+
+export function assertDeliberationManagePermission(context: AppAuthContext) {
+  if (!context.permissions.has(RUSH_DELIBERATION_MANAGE)) {
+    throw new RouteAuthError(403, "Missing deliberation admin permission.");
   }
 }

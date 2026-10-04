@@ -140,6 +140,8 @@ export async function GET() {
 
     for (const clerkUser of clerkUsers) {
       if (linkedClerkIds.has(clerkUser.id)) continue;
+      // Rush candidates' accounts are managed from the rush section.
+      if (clerkUser.publicMetadata?.accountType === "pnm") continue;
 
       const email = getClerkEmail(clerkUser);
       if (!email) continue;

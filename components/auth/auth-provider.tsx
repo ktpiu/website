@@ -14,7 +14,7 @@ type MeResponse = {
   permissions?: string[]
   error?: string
   /** Present on 403 when the account is awaiting approval or was denied. */
-  status?: 'pending' | 'denied' | 'disaffiliated'
+  status?: 'pending' | 'denied' | 'disaffiliated' | 'pnm'
 }
 
 const SETUP_ERROR_MESSAGE =
@@ -63,7 +63,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
           const accessStatus =
             response.status === 403 && (body.status === 'pending' ||
               body.status === 'denied' ||
-              body.status === 'disaffiliated')
+              body.status === 'disaffiliated' ||
+              body.status === 'pnm')
               ? body.status
               : null
           if (!accessStatus) {

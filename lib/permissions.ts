@@ -7,6 +7,9 @@ export const ADMIN_FINANCE_VIEW = "admin.finance.view";
 export const ADMIN_FINANCE_EDIT = "admin.finance.edit";
 export const ADMIN_USERS_EDIT = "admin.users.edit";
 export const ADMIN_USERS_DELETE = "admin.users.delete";
+export const RUSH_VIEW = "rush.view";
+export const RUSH_MANAGE = "rush.manage";
+export const RUSH_DELIBERATION_MANAGE = "rush.deliberation.manage";
 
 type RolePermissionRowLike = {
   role_id?: string | null;
@@ -86,6 +89,21 @@ export function canDeleteUsersAdmin(permissions: Iterable<string> | null | undef
 
 export function canEditFinanceAdmin(permissions: Iterable<string> | null | undefined) {
   return hasPermission(permissions, ADMIN_FINANCE_EDIT);
+}
+
+/** PNM list, attendance, applications and every evaluation. */
+export function canViewRush(permissions: Iterable<string> | null | undefined) {
+  return hasAnyPermission(permissions, [RUSH_VIEW, RUSH_MANAGE]);
+}
+
+/** Cycles, events, timeslots, form templates, contacts and PNM edits. */
+export function canManageRush(permissions: Iterable<string> | null | undefined) {
+  return hasPermission(permissions, RUSH_MANAGE);
+}
+
+/** Runs deliberation sessions and sees voting history. */
+export function canManageDeliberation(permissions: Iterable<string> | null | undefined) {
+  return hasPermission(permissions, RUSH_DELIBERATION_MANAGE);
 }
 
 /**

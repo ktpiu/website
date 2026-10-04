@@ -5,6 +5,8 @@ import { useAuthStore } from "@/lib/auth-store";
 import { Unauthorized } from "./unauthorized";
 import { Loader2 } from "lucide-react";
 import { RedirectToSignIn } from "@clerk/nextjs";
+import { useRouter } from "next/navigation";
+import { useEffect } from "react";
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -13,9 +15,15 @@ interface ProtectedRouteProps {
 export function ProtectedRoute({ children }: ProtectedRouteProps) {
   const { isSignedIn, isLoaded: clerkLoaded } = useUser();
   const { isAuthorized, isLoading, authError, authStatus } = useAuthStore();
+  const router = useRouter();
 
-  // Show loading while Clerk loads
-  if (!clerkLoaded || isLoading) {
+  // Rush candidates have their own portal.
+  useEffect(() => {
+    if (authStatus === "pnm") router.replace("/rush/portal");
+  }, [authStatus, router]);
+
+  // Show loading while Clerk loads (and while a PNM is being redirected)
+  if (!clerkLoaded || isLoading || authStatus === "pnm") {
     return (
       <div className="min-h-screen min-w-screen flex items-center justify-center">
         <div className="text-center space-y-4">

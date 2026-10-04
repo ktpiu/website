@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
  */
 export async function GET() {
   try {
-    const context = await requireAppAuthContext();
+    const context = await requireAppAuthContext({ fresh: true });
 
     return NextResponse.json(
       {

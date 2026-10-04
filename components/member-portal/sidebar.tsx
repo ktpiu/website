@@ -18,7 +18,16 @@ import {
   KeyRound,
   Flame,
   UserRound,
+  CalendarRange,
+  ClipboardPen,
+  Gavel,
+  Contact,
+  CalendarCog,
+  Settings2,
 } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { prefetchRushPage, useCycleParam } from "@/components/member-portal/rush/shared";
+import { LiveIndicator } from "@/components/rush/live-indicator";
 import {
   Sidebar,
   SidebarContent,
@@ -28,6 +37,7 @@ import {
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   useSidebar,
@@ -42,7 +52,12 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useAuthStore } from "@/lib/auth-store";
 import Link from "next/link";
-import { canViewAdmin, canViewFinanceAdmin } from "@/lib/permissions";
+import {
+  canManageRush,
+  canViewAdmin,
+  canViewFinanceAdmin,
+  canViewRush,
+} from "@/lib/permissions";
 
 export function MemberPortalSidebar() {
   //   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -131,6 +146,42 @@ export function MemberPortalSidebar() {
     return pathname.startsWith(href);
   };
 
+  const queryClient = useQueryClient();
+  const cycleParam = useCycleParam();
+  const rushView = canViewRush(permissions);
+  const rushManage = canManageRush(permissions);
+  const rushNav = useQuery({
+    queryKey: ["rush", "nav"],
+    queryFn: async () => {
+      const response = await fetch("/api/rush/nav", { cache: "no-store" });
+      if (!response.ok) return { deliberationLive: false, unmatchedPending: 0 };
+      return (await response.json()) as { deliberationLive: boolean; unmatchedPending: number };
+    },
+    refetchInterval: 60_000,
+  });
+  const rushItems = [
+    { icon: CalendarRange, label: "Schedule", href: "/member-portal/rush/schedule" },
+    { icon: ClipboardPen, label: "PNM Forms", href: "/member-portal/rush/forms" },
+    {
+      icon: Gavel,
+      label: "Deliberation",
+      href: "/member-portal/rush/deliberation",
+      live: Boolean(rushNav.data?.deliberationLive),
+    },
+    ...(rushView ? [{ icon: Contact, label: "PNMs", href: "/member-portal/rush/pnms" }] : []),
+    ...(rushManage
+      ? [
+          {
+            icon: CalendarCog,
+            label: "Events & Check-in",
+            href: "/member-portal/rush/events",
+            badge: rushNav.data?.unmatchedPending ? String(rushNav.data.unmatchedPending) : null,
+          },
+          { icon: Settings2, label: "Rush Settings", href: "/member-portal/rush/settings" },
+        ]
+      : []),
+  ];
+
   const canViewFinance = canViewFinanceAdmin(permissions);
   const canViewCoreAdmin = canViewAdmin(permissions);
   const showAdminGroup = canViewCoreAdmin || canViewFinance;
@@ -159,6 +210,36 @@ export function MemberPortalSidebar() {
                       <span>{item.label}</span>
                     </Link>
                   </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup>
+          <SidebarGroupLabel>Rush</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {rushItems.map((item) => (
+                <SidebarMenuItem key={item.label}>
+                  <SidebarMenuButton asChild isActive={isActiveRoute(item.href)}>
+                    <Link
+                      href={item.href}
+                      onMouseEnter={() => prefetchRushPage(queryClient, item.href, cycleParam)}
+                      onFocus={() => prefetchRushPage(queryClient, item.href, cycleParam)}
+                    >
+                      <item.icon />
+                      <span>{item.label}</span>
+                    </Link>
+                  </SidebarMenuButton>
+                  {"live" in item && item.live ? (
+                    <SidebarMenuBadge>
+                      <LiveIndicator />
+                    </SidebarMenuBadge>
+                  ) : "badge" in item && item.badge ? (
+                    <SidebarMenuBadge className="bg-amber-500 text-white peer-hover/menu-button:text-white peer-data-[active=true]/menu-button:text-white">
+                      {item.badge}
+                    </SidebarMenuBadge>
+                  ) : null}
                 </SidebarMenuItem>
               ))}
             </SidebarMenu>
