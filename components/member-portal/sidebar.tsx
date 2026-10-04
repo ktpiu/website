@@ -24,7 +24,6 @@ import {
   Contact,
   CalendarCog,
   Settings2,
-  UserCheck,
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { prefetchRushPage, useCycleParam } from "@/components/member-portal/rush/shared";
@@ -56,7 +55,6 @@ import Link from "next/link";
 import {
   canManageRush,
   canManageRushForms,
-  canViewActiveAttendance,
   canViewAdmin,
   canViewFinanceAdmin,
   canViewRush,
@@ -168,7 +166,7 @@ export function MemberPortalSidebar() {
   });
   // Once the cycle has concluded, only people who run rush keep the tabs.
   const showRushGroup =
-    rushNav.data?.cyclePhase !== "concluded" || canManageRushForms(permissions) || canViewActiveAttendance(permissions);
+    rushNav.data?.cyclePhase !== "concluded" || canManageRushForms(permissions);
   const rushItems = [
     { icon: CalendarRange, label: "Schedule", href: "/member-portal/rush/schedule" },
     { icon: ClipboardPen, label: "PNM Forms", href: "/member-portal/rush/forms" },
@@ -179,9 +177,6 @@ export function MemberPortalSidebar() {
       live: Boolean(rushNav.data?.deliberationLive),
     },
     ...(rushView ? [{ icon: Contact, label: "PNMs", href: "/member-portal/rush/pnms" }] : []),
-    ...(canViewActiveAttendance(permissions)
-      ? [{ icon: UserCheck, label: "Active Attendance", href: "/member-portal/rush/attendance" }]
-      : []),
     ...(rushManage
       ? [
           {
