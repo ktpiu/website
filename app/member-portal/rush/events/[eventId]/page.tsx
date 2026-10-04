@@ -28,6 +28,7 @@ import { EventForm, eventToForm, formToPayload, type EventFormValues } from "@/c
 import type { MemberEvent, MemberSlot } from "@/components/member-portal/rush/types";
 import { useSlotBroadcasts } from "@/hooks/use-rush-realtime";
 import { AVATAR_ACCEPT } from "@/lib/avatar-upload";
+import { cn } from "@/lib/utils";
 import { errorMessage, formatDateTime, formatRange, formatTime, fromLocalInput, rushFetch, toLocalInput } from "@/lib/rush/client";
 
 type AttendanceData = {
@@ -43,16 +44,13 @@ type AttendanceData = {
   cyclePnms: Array<{ id: string; name: string; email: string }>;
 };
 
-type SlotForm = { startsAt: string; endsAt: string; locationName: string; notes: string; pnmCapacity: string; activeCapacity: string };
+type AxisDialog =
+  | { kind: "time"; ids: string[] | null; date: string; start: string; end: string }
+  | { kind: "location"; ids: string[] | null; name: string };
+type AllocateDialog = { id: string; pnmCapacity: string; activeCapacity: string; notes: string };
 
-const emptySlot = (event?: MemberEvent): SlotForm => ({
-  startsAt: event ? toLocalInput(event.startsAt) : "",
-  endsAt: "",
-  locationName: event?.locationName ?? "",
-  notes: "",
-  pnmCapacity: "4",
-  activeCapacity: "2",
-});
+const isUnallocated = (slot: MemberSlot) =>
+  slot.pnmCapacity === 0 && slot.activeCapacity === 0 && slot.pnms.length === 0 && slot.actives.length === 0;
 
 function useAction(refresh: () => void) {
   return async (fn: () => Promise<unknown>, success?: string) => {
@@ -97,7 +95,8 @@ export default function RushEventDetailPage({ params }: { params: Promise<{ even
 
   const [form, setForm] = useState<EventFormValues | null>(null);
   const [presentOpen, setPresentOpen] = useState(false);
-  const [slotDialog, setSlotDialog] = useState<{ id: string | null; values: SlotForm } | null>(null);
+  const [axisDialog, setAxisDialog] = useState<AxisDialog | null>(null);
+  const [allocateDialog, setAllocateDialog] = useState<AllocateDialog | null>(null);
   const [manualPnmId, setManualPnmId] = useState("");
   const [walkIn, setWalkIn] = useState({ name: "", email: "" });
   const imageInput = useRef<HTMLInputElement>(null);
@@ -143,26 +142,88 @@ export default function RushEventDetailPage({ params }: { params: Promise<{ even
     }
   };
 
-  const saveSlot = () => {
-    if (!slotDialog) return;
-    const v = slotDialog.values;
-    const json = {
-      startsAt: fromLocalInput(v.startsAt),
-      endsAt: fromLocalInput(v.endsAt),
-      locationName: v.locationName,
-      notes: v.notes,
-      pnmCapacity: Number(v.pnmCapacity || 0),
-      activeCapacity: Number(v.activeCapacity || 0),
-    };
-    const id = slotDialog.id;
-    setSlotDialog(null);
+  const slotsUrl = `/api/rush/events/${event.id}/slots`;
+  const distinct = (items: string[]) => Array.from(new Set(items));
+  const timeKeyOf = (sl: MemberSlot) => `${sl.startsAt}|${sl.endsAt ?? ""}`;
+
+  const saveAxis = () => {
+    if (!axisDialog) return;
+    const d = axisDialog;
+    setAxisDialog(null);
+    if (d.kind === "time") {
+      const startsAt = fromLocalInput(`${d.date}T${d.start}`);
+      const endsAt = d.end ? fromLocalInput(`${d.date}T${d.end}`) : null;
+      if (d.ids) {
+        run(
+          () => Promise.all(d.ids!.map((id) => rushFetch(`/api/rush/slots/${id}`, { method: "PATCH", json: { startsAt, endsAt } }))),
+          "Time updated.",
+        );
+        return;
+      }
+      // A new time gets one empty cell under every existing location.
+      const locations = distinct(event.slots.map((sl) => sl.locationName));
+      const slots = (locations.length ? locations : [event.locationName]).map((locationName) => ({
+        startsAt,
+        endsAt,
+        locationName,
+        pnmCapacity: 0,
+        activeCapacity: 0,
+      }));
+      run(() => rushFetch(slotsUrl, { method: "POST", json: { slots } }), "Time added.");
+      return;
+    }
+    const name = d.name.trim();
+    if (d.ids) {
+      run(
+        () => Promise.all(d.ids!.map((id) => rushFetch(`/api/rush/slots/${id}`, { method: "PATCH", json: { locationName: name } }))),
+        "Location updated.",
+      );
+      return;
+    }
+    const blank = event.slots.filter((sl) => !sl.locationName.trim());
+    if (event.slots.length > 0 && blank.length === event.slots.length) {
+      // Only unnamed cells exist so far: name them instead of adding a second column.
+      run(
+        () => Promise.all(blank.map((sl) => rushFetch(`/api/rush/slots/${sl.id}`, { method: "PATCH", json: { locationName: name } }))),
+        "Location added.",
+      );
+      return;
+    }
+    // A new location gets one empty cell at every existing time.
+    const times = new Map(event.slots.map((sl) => [timeKeyOf(sl), sl]));
+    const slots = (times.size ? Array.from(times.values()) : [{ startsAt: event.startsAt, endsAt: null }]).map((t) => ({
+      startsAt: t.startsAt,
+      endsAt: t.endsAt,
+      locationName: name,
+      pnmCapacity: 0,
+      activeCapacity: 0,
+    }));
+    run(() => rushFetch(slotsUrl, { method: "POST", json: { slots } }), "Location added.");
+  };
+
+  const deleteAxis = (ids: string[], what: string) => {
+    if (!window.confirm(`Delete this ${what} and any signups in it?`)) return;
+    run(() => Promise.all(ids.map((id) => rushFetch(`/api/rush/slots/${id}`, { method: "DELETE" }))), `${what[0].toUpperCase()}${what.slice(1)} deleted.`);
+  };
+
+  const saveAllocation = () => {
+    if (!allocateDialog) return;
+    const v = allocateDialog;
+    setAllocateDialog(null);
     run(
       () =>
-        id
-          ? rushFetch(`/api/rush/slots/${id}`, { method: "PATCH", json })
-          : rushFetch(`/api/rush/events/${event.id}/slots`, { method: "POST", json }),
-      id ? "Timeslot updated." : "Timeslot added.",
+        rushFetch(`/api/rush/slots/${v.id}`, {
+          method: "PATCH",
+          json: { pnmCapacity: Number(v.pnmCapacity || 0), activeCapacity: Number(v.activeCapacity || 0), notes: v.notes },
+        }),
+      "Spots saved.",
     );
+  };
+
+  const openAddTime = () => {
+    const last = [...event.slots].sort((x, y) => y.startsAt.localeCompare(x.startsAt))[0];
+    const base = toLocalInput(last?.startsAt ?? event.startsAt);
+    setAxisDialog({ kind: "time", ids: null, date: base.slice(0, 10), start: "", end: "" });
   };
 
   const copyLink = async () => {
@@ -191,9 +252,9 @@ export default function RushEventDetailPage({ params }: { params: Promise<{ even
         </Button>
       </div>
 
-      <Tabs defaultValue="checkin">
+      <Tabs defaultValue={event.attendanceEnabled ? "checkin" : "attendance"}>
         <TabsList className="flex-wrap">
-          <TabsTrigger value="checkin">Check-in</TabsTrigger>
+          {event.attendanceEnabled ? <TabsTrigger value="checkin">Check-in</TabsTrigger> : null}
           <TabsTrigger value="attendance">
             Attendance ({presentCount})
             {attendance?.unmatched.length ? (
@@ -204,7 +265,7 @@ export default function RushEventDetailPage({ params }: { params: Promise<{ even
           <TabsTrigger value="details">Details</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="checkin" className="pt-4">
+        {event.attendanceEnabled ? <TabsContent value="checkin" className="pt-4">
           <Card>
             <CardContent className="grid gap-6 pt-6 md:grid-cols-[auto_1fr]">
               <div className="mx-auto rounded-xl bg-white p-4">
@@ -245,7 +306,7 @@ export default function RushEventDetailPage({ params }: { params: Promise<{ even
               </div>
             </CardContent>
           </Card>
-        </TabsContent>
+        </TabsContent> : null}
 
         <TabsContent value="attendance" className="space-y-4 pt-4">
           {attendance?.unmatched.length ? (
@@ -344,6 +405,20 @@ export default function RushEventDetailPage({ params }: { params: Promise<{ even
               >
                 Check in
               </Button>
+              <Button
+                variant="outline"
+                disabled={!manualPnmId}
+                onClick={() => {
+                  const pnmId = manualPnmId;
+                  setManualPnmId("");
+                  run(
+                    () => rushFetch(`/api/rush/events/${event.id}/mark`, { method: "POST", json: { pnmId, status: "no_show" } }),
+                    "Marked no-show.",
+                  );
+                }}
+              >
+                <X className="mr-1 h-4 w-4" /> No-show
+              </Button>
               {event.visibility === "public" ? (
                 <>
                   <span className="pb-2 text-xs text-muted-foreground">or new walk-in</span>
@@ -418,43 +493,101 @@ export default function RushEventDetailPage({ params }: { params: Promise<{ even
                   : `Self-changes allowed until ${event.changeCutoffMinutes} min before a slot.`}{" "}
                 Change these under Details.
               </p>
-              <Button onClick={() => setSlotDialog({ id: null, values: emptySlot(event) })}>
-                <Plus className="mr-1.5 h-4 w-4" /> Add timeslot
-              </Button>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={openAddTime}>
+                  <Plus className="mr-1.5 h-4 w-4" /> Add time
+                </Button>
+                <Button variant="outline" onClick={() => setAxisDialog({ kind: "location", ids: null, name: "" })}>
+                  <Plus className="mr-1.5 h-4 w-4" /> Add location
+                </Button>
+              </div>
             </div>
             {event.slots.length === 0 ? (
-              <p className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">No timeslots yet.</p>
+              <p className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">
+                Start by adding a time (with its date) and a location. Each cell stays empty until you allocate PNM and active spots to it.
+              </p>
             ) : (
               <SlotGrid
                 slots={event.slots}
                 layout={event.slotGrid}
-                renderCell={(slot) => (
-                  <SlotAdminCell
-                    slot={slot}
-                    cyclePnms={attendance?.cyclePnms ?? []}
-                    members={membersQuery.data ?? []}
-                    onEdit={() =>
-                      setSlotDialog({
-                        id: slot.id,
-                        values: {
-                          startsAt: toLocalInput(slot.startsAt),
-                          endsAt: toLocalInput(slot.endsAt),
-                          locationName: slot.locationName,
-                          notes: slot.notes ?? "",
+                alwaysShowDate
+                renderHeader={(axis, label, group) => {
+                  const ids = group.map((g) => g.id);
+                  const first = group[0];
+                  const edit = () =>
+                    axis === "time"
+                      ? setAxisDialog({
+                          kind: "time",
+                          ids,
+                          date: toLocalInput(first.startsAt).slice(0, 10),
+                          start: toLocalInput(first.startsAt).slice(11),
+                          end: toLocalInput(first.endsAt).slice(11),
+                        })
+                      : setAxisDialog({ kind: "location", ids, name: first.locationName });
+                  return (
+                    <span className="flex items-center justify-between gap-1">
+                      <span>{label}</span>
+                      <span className="flex shrink-0">
+                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={edit} aria-label={`Edit ${axis}`}>
+                          <Pencil className="h-3 w-3" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => deleteAxis(ids, axis)} aria-label={`Delete ${axis}`}>
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </span>
+                    </span>
+                  );
+                }}
+                renderCell={(slot) =>
+                  isUnallocated(slot) ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-auto w-full border-dashed py-3 text-xs text-muted-foreground"
+                      onClick={() =>
+                        setAllocateDialog({ id: slot.id, pnmCapacity: "4", activeCapacity: "2", notes: slot.notes ?? "" })
+                      }
+                    >
+                      <Plus className="mr-1 h-3.5 w-3.5" /> Allocate spots
+                    </Button>
+                  ) : (
+                    <SlotAdminCell
+                      slot={slot}
+                      cyclePnms={attendance?.cyclePnms ?? []}
+                      members={membersQuery.data ?? []}
+                      onEdit={() =>
+                        setAllocateDialog({
+                          id: slot.id,
                           pnmCapacity: String(slot.pnmCapacity),
                           activeCapacity: String(slot.activeCapacity),
-                        },
-                      })
-                    }
-                    onDelete={() => {
-                      if (window.confirm("Delete this timeslot and its signups?")) {
-                        run(() => rushFetch(`/api/rush/slots/${slot.id}`, { method: "DELETE" }), "Timeslot deleted.");
+                          notes: slot.notes ?? "",
+                        })
                       }
-                    }}
-                    onAssign={(json) => run(() => rushFetch(`/api/rush/slots/${slot.id}/assign`, { method: "POST", json }))}
-                    onRemove={(signupId) => run(() => rushFetch(`/api/rush/signups/${signupId}`, { method: "DELETE" }))}
-                  />
-                )}
+                      onDelete={() => {
+                        if (window.confirm("Clear this cell and its signups?")) {
+                          run(
+                            () =>
+                              rushFetch(`/api/rush/slots/${slot.id}`, { method: "DELETE" }).then(() =>
+                                rushFetch(slotsUrl, {
+                                  method: "POST",
+                                  json: {
+                                    startsAt: slot.startsAt,
+                                    endsAt: slot.endsAt,
+                                    locationName: slot.locationName,
+                                    pnmCapacity: 0,
+                                    activeCapacity: 0,
+                                  },
+                                }),
+                              ),
+                            "Cell cleared.",
+                          );
+                        }
+                      }}
+                      onAssign={(json) => run(() => rushFetch(`/api/rush/slots/${slot.id}/assign`, { method: "POST", json }))}
+                      onRemove={(signupId) => run(() => rushFetch(`/api/rush/signups/${signupId}`, { method: "DELETE" }))}
+                    />
+                  )
+                }
               />
             )}
           </TabsContent>
@@ -510,46 +643,102 @@ export default function RushEventDetailPage({ params }: { params: Promise<{ even
         </DialogContent>
       </Dialog>
 
-      <Dialog open={Boolean(slotDialog)} onOpenChange={(open) => !open && setSlotDialog(null)}>
+      <Dialog open={Boolean(axisDialog)} onOpenChange={(open) => !open && setAxisDialog(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{slotDialog?.id ? "Edit timeslot" : "Add timeslot"}</DialogTitle>
+            <DialogTitle>
+              {axisDialog?.ids ? "Edit" : "Add"} {axisDialog?.kind === "location" ? "location" : "time"}
+            </DialogTitle>
           </DialogHeader>
-          {slotDialog ? (
-            <div className="grid gap-4 sm:grid-cols-2">
+          {axisDialog?.kind === "time" ? (
+            <div className="grid gap-4 sm:grid-cols-3">
               {(
                 [
-                  ["startsAt", "Starts", "datetime-local"],
-                  ["endsAt", "Ends", "datetime-local"],
-                  ["locationName", "Location", "text"],
-                  ["notes", "Notes", "text"],
-                  ["pnmCapacity", "PNM capacity", "number"],
-                  ["activeCapacity", "Active capacity", "number"],
+                  ["date", "Date", "date"],
+                  ["start", "Starts", "time"],
+                  ["end", "Ends (optional)", "time"],
                 ] as const
               ).map(([key, label, type]) => (
                 <div key={key} className="space-y-2">
-                  <Label htmlFor={`slot-${key}`}>{label}</Label>
+                  <Label htmlFor={`axis-${key}`}>{label}</Label>
                   <Input
-                    id={`slot-${key}`}
+                    id={`axis-${key}`}
+                    type={type}
+                    value={axisDialog[key]}
+                    onChange={(e) => setAxisDialog((d) => (d && d.kind === "time" ? { ...d, [key]: e.target.value } : d))}
+                  />
+                </div>
+              ))}
+              {!axisDialog.ids ? (
+                <p className="text-xs text-muted-foreground sm:col-span-3">
+                  Adds an empty cell under every location. Spanning several days? Add each day&apos;s times separately.
+                </p>
+              ) : null}
+            </div>
+          ) : axisDialog ? (
+            <div className="space-y-2">
+              <Label htmlFor="axis-name">Location</Label>
+              <Input
+                id="axis-name"
+                autoFocus
+                value={axisDialog.name}
+                placeholder="Luddy Hall 1106"
+                onChange={(e) => setAxisDialog((d) => (d && d.kind === "location" ? { ...d, name: e.target.value } : d))}
+              />
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAxisDialog(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={saveAxis}
+              disabled={
+                !axisDialog ||
+                (axisDialog.kind === "time" ? !axisDialog.date || !axisDialog.start : !axisDialog.name.trim())
+              }
+            >
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(allocateDialog)} onOpenChange={(open) => !open && setAllocateDialog(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Allocate spots</DialogTitle>
+          </DialogHeader>
+          {allocateDialog ? (
+            <div className="grid gap-4 sm:grid-cols-2">
+              {(
+                [
+                  ["pnmCapacity", "PNM spots", "number"],
+                  ["activeCapacity", "Active spots", "number"],
+                  ["notes", "Notes (optional)", "text"],
+                ] as const
+              ).map(([key, label, type]) => (
+                <div key={key} className={cn("space-y-2", key === "notes" && "sm:col-span-2")}>
+                  <Label htmlFor={`alloc-${key}`}>{label}</Label>
+                  <Input
+                    id={`alloc-${key}`}
                     type={type}
                     min={type === "number" ? 0 : undefined}
-                    value={slotDialog.values[key]}
-                    onChange={(e) => setSlotDialog((d) => d && { ...d, values: { ...d.values, [key]: e.target.value } })}
+                    value={allocateDialog[key]}
+                    onChange={(e) => setAllocateDialog((d) => d && { ...d, [key]: e.target.value })}
                   />
                 </div>
               ))}
               <p className="text-xs text-muted-foreground sm:col-span-2">
-                Lowering a capacity keeps everyone already signed up; it only blocks new signups.
+                Cells with no spots stay hidden from PNMs and actives. Lowering spots keeps everyone already signed up; it only blocks new signups.
               </p>
             </div>
           ) : null}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setSlotDialog(null)}>
+            <Button variant="outline" onClick={() => setAllocateDialog(null)}>
               Cancel
             </Button>
-            <Button onClick={saveSlot} disabled={!slotDialog?.values.startsAt}>
-              Save
-            </Button>
+            <Button onClick={saveAllocation}>Save</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

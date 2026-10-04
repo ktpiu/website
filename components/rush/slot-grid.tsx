@@ -15,15 +15,21 @@ export function SlotGrid<T extends GridSlot>({
   slots,
   layout,
   renderCell,
+  renderHeader,
+  alwaysShowDate = false,
 }: {
   slots: T[];
   layout: SlotGridLayout;
   renderCell: (slot: T) => ReactNode;
+  /** Replaces a row/column header, e.g. to add edit controls. `group` is every slot under that header. */
+  renderHeader?: (axis: "time" | "location", label: string, group: T[]) => ReactNode;
+  /** Show the date on every time label, not only when the slots span several days. */
+  alwaysShowDate?: boolean;
 }) {
   if (slots.length === 0) return null;
 
   const sorted = [...slots].sort((a, b) => a.startsAt.localeCompare(b.startsAt));
-  const multiDay = new Set(sorted.map((s) => new Date(s.startsAt).toDateString())).size > 1;
+  const multiDay = alwaysShowDate || new Set(sorted.map((s) => new Date(s.startsAt).toDateString())).size > 1;
 
   const timeKey = (s: GridSlot) => `${s.startsAt}|${s.endsAt ?? ""}`;
   const locationKey = (s: GridSlot) => s.locationName.trim() || NO_LOCATION;
@@ -43,6 +49,12 @@ export function SlotGrid<T extends GridSlot>({
   const rowKey = layout === "time_rows" ? timeKey : locationKey;
   const colKey = layout === "time_rows" ? locationKey : timeKey;
   const label = (key: string, sample: T, isTime: boolean) => (isTime ? timeLabel(sample) : key);
+  const header = (key: string, sample: T, isTime: boolean) => {
+    const text = label(key, sample, isTime);
+    if (!renderHeader) return text;
+    const group = sorted.filter((s) => (isTime ? timeKey(s) === key : locationKey(s) === key));
+    return renderHeader(isTime ? "time" : "location", text, group);
+  };
 
   return (
     <div className="overflow-x-auto rounded-lg border">
@@ -54,7 +66,7 @@ export function SlotGrid<T extends GridSlot>({
             </th>
             {cols.map(([key, sample]) => (
               <th key={String(key)} className="min-w-48 border-b border-l px-3 py-2 text-left text-xs font-semibold">
-                {label(String(key), sample, layout !== "time_rows")}
+                {header(String(key), sample, layout !== "time_rows")}
               </th>
             ))}
           </tr>
@@ -63,7 +75,7 @@ export function SlotGrid<T extends GridSlot>({
           {rows.map(([rKey, rSample]) => (
             <tr key={String(rKey)} className="align-top">
               <th className="sticky left-0 z-10 border-b bg-background px-3 py-2 text-left text-xs font-semibold">
-                {label(String(rKey), rSample, layout === "time_rows")}
+                {header(String(rKey), rSample, layout === "time_rows")}
               </th>
               {cols.map(([cKey]) => {
                 const here = sorted.filter((s) => rowKey(s) === rKey && colKey(s) === cKey);

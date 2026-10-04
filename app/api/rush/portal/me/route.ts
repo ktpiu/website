@@ -96,6 +96,8 @@ export async function GET() {
             slots: event.has_timeslots
               ? slots
                   .filter((s) => s.event_id === event.id)
+                  // Cells the admin hasn't allocated PNM spots to stay hidden.
+                  .filter((s) => s.pnm_capacity > 0 || (taken.get(s.id) ?? 0) > 0)
                   .map((s) => ({
                     id: s.id,
                     startsAt: s.starts_at,

@@ -96,6 +96,10 @@ function SlotCell({
   );
 }
 
+/** Hides cells the rush directors haven't allocated any spots to yet. */
+const allocated = <T extends { pnmCapacity: number; activeCapacity: number; pnms: unknown[]; actives: unknown[] }>(slots: T[]) =>
+  slots.filter((s) => s.pnmCapacity > 0 || s.activeCapacity > 0 || s.pnms.length > 0 || s.actives.length > 0);
+
 export default function RushSchedulePage() {
   const { permissions, user } = useAuthStore();
   const { cycle, cycleParam, isPending: cyclesPending } = useSelectedCycle();
@@ -234,11 +238,11 @@ export default function RushSchedulePage() {
                           ? `Changes allowed until ${event.changeCutoffMinutes} min before a slot.`
                           : "Changes allowed until a slot starts."}
                     </p>
-                    {event.slots.length === 0 ? (
+                    {allocated(event.slots).length === 0 ? (
                       <p className="text-sm text-muted-foreground">No timeslots have been added yet.</p>
                     ) : (
                       <SlotGrid
-                        slots={event.slots}
+                        slots={allocated(event.slots)}
                         layout={event.slotGrid}
                         renderCell={(slot) => (
                           <SlotCell
