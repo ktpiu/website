@@ -239,21 +239,7 @@ export default function RushSettingsPage() {
                     </p>
                   </div>
                   {t.submission_mode === "multiple" ? <Badge variant="secondary">Multi-person</Badge> : null}
-                  {!t.is_active ? <Badge variant="outline">Archived</Badge> : null}
-                  {t.kind === "evaluation" && t.is_active ? (
-                    <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                      <Switch
-                        checked={t.is_open}
-                        onCheckedChange={(isOpen) =>
-                          run(
-                            () => rushFetch(`/api/rush/templates/${t.id}/open`, { method: "PATCH", json: { isOpen } }),
-                            isOpen ? `${t.name} is open.` : `${t.name} is closed.`,
-                          )
-                        }
-                      />
-                      {t.is_open ? "Open" : "Closed"}
-                    </label>
-                  ) : null}
+                  {!t.is_active ? <Badge variant="outline">Disabled</Badge> : null}
                   {t.hide_author_in_deliberation ? <Badge variant="secondary">Anonymous</Badge> : null}
                   <Button
                     variant="ghost"

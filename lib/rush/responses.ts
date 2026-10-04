@@ -9,7 +9,7 @@ import {
   type RushFormTemplate,
 } from "@/lib/rush/types";
 
-/** Loads an active, open evaluation form and validates answers against it. */
+/** Loads an enabled evaluation form and validates answers against it. */
 export async function validateResponse(templateId: string, rawAnswers: unknown) {
   const { data, error } = await supabaseAdmin
     .from("rush_form_templates")
@@ -20,8 +20,8 @@ export async function validateResponse(templateId: string, rawAnswers: unknown) 
   if (error) throw error;
   if (!data) throw new RushError(404, "Form not found.");
   const template = toTemplate(data);
-  if (!template.is_active || !template.is_open) {
-    throw new RushError(400, "This form is closed and no longer accepting responses.", "FORM_CLOSED");
+  if (!template.is_active) {
+    throw new RushError(400, "This form is disabled and no longer accepting responses.", "FORM_CLOSED");
   }
 
   const answers = sanitizeAnswers(template.fields, rawAnswers);

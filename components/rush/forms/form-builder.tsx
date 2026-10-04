@@ -35,6 +35,20 @@ export function FormBuilder({ draft, onChange }: { draft: TemplateDraft; onChang
     onChange({ ...draft, fields });
   };
 
+  // Evaluations report conflicts by naming PNMs; applications by naming actives.
+  const conflictSource: PeopleSource = draft.kind === "evaluation" ? "pnms" : "actives";
+  const conflictCandidates = draft.fields.filter((f) => f.type === "people" && f.people?.source === conflictSource);
+  const conflictFieldId = conflictCandidates.find((f) => f.people?.conflict)?.id ?? "";
+  const setConflictField = (id: string) =>
+    onChange({
+      ...draft,
+      fields: draft.fields.map((f) =>
+        f.type === "people" && f.people
+          ? { ...f, people: { ...f.people, conflict: f.id === id && f.people.source === conflictSource } }
+          : f,
+      ),
+    });
+
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-2">
@@ -61,7 +75,7 @@ export function FormBuilder({ draft, onChange }: { draft: TemplateDraft; onChang
       <div className="flex flex-wrap gap-6">
         <label className="flex items-center gap-2 text-sm">
           <Switch checked={draft.isActive} onCheckedChange={(v) => onChange({ ...draft, isActive: v })} />
-          Active
+          Enabled (disabled forms are hidden from actives)
         </label>
         {draft.kind === "evaluation" ? (
           <label className="flex items-center gap-2 text-sm">
@@ -72,6 +86,23 @@ export function FormBuilder({ draft, onChange }: { draft: TemplateDraft; onChang
             Hide author names during deliberation
           </label>
         ) : null}
+      </div>
+
+      <div className="space-y-2 rounded-lg border p-3">
+        <Label htmlFor="tpl-conflict">Conflict of interest question</Label>
+        <NativeSelect id="tpl-conflict" value={conflictFieldId} onChange={(e) => setConflictField(e.target.value)}>
+          <option value="">None: this form doesn&apos;t report conflicts</option>
+          {conflictCandidates.map((f) => (
+            <option key={f.id} value={f.id}>
+              {f.label.trim() || "Untitled question"}
+            </option>
+          ))}
+        </NativeSelect>
+        <p className="text-xs text-muted-foreground">
+          {draft.kind === "evaluation"
+            ? "Pick a question that selects PNMs. Whoever submits is reported as having a conflict with each PNM they choose, and they don't have to pick a PNM before filling the form out. Add a \"People\" question set to \"PNMs in this cycle\" if none are listed."
+            : "Pick a question that selects actives. Each active the PNM names is reported as a conflict. Add a \"People\" question set to \"Actives\" if none are listed."}
+        </p>
       </div>
 
       {draft.kind === "evaluation" ? (
@@ -239,28 +270,10 @@ export function FormBuilder({ draft, onChange }: { draft: TemplateDraft; onChang
                   />
                   Allow several
                 </label>
-                {draft.kind === "evaluation" ? (
-                  field.people?.source === "pnms" ? (
-                    <label className="flex items-center gap-1.5 text-xs">
-                      <Switch
-                        checked={Boolean(field.people?.conflict)}
-                        onCheckedChange={(conflict) =>
-                          setField(index, { people: { source: "pnms", multiple: true, ...field.people, conflict } })
-                        }
-                      />
-                      Report as conflicts of interest
-                    </label>
-                  ) : null
-                ) : field.people?.source === "actives" ? (
-                  <label className="flex items-center gap-1.5 text-xs">
-                    <Switch
-                      checked={Boolean(field.people?.conflict)}
-                      onCheckedChange={(conflict) =>
-                        setField(index, { people: { source: "actives", multiple: true, ...field.people, conflict } })
-                      }
-                    />
-                    Report as conflicts of interest
-                  </label>
+                {conflictCandidates.some((f) => f.id === field.id) ? (
+                  <span className="text-xs text-muted-foreground">
+                    {field.people?.conflict ? "Used for conflicts of interest" : null}
+                  </span>
                 ) : null}
               </div>
             ) : null}

@@ -59,7 +59,6 @@ export type RushFormTemplate = {
   fields: RushFormField[];
   hide_author_in_deliberation: boolean;
   is_active: boolean;
-  is_open: boolean;
   submission_mode: "single" | "multiple";
   participant_roles: ParticipantRole[];
   sort_order: number;

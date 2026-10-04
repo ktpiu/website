@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { ArrowLeft, Loader2, Pencil, Search, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/lib/auth-store";
-import { canManageRush, canManageRushForms } from "@/lib/permissions";
+import { canManageRush } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -14,7 +14,6 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PeopleSelector } from "@/components/ui/people-selector";
-import { Switch } from "@/components/ui/switch";
 import { NativeSelect } from "@/components/rush/native-select";
 import { usePeopleOptions } from "@/components/rush/forms/use-people-options";
 import type { EventsResponse } from "@/components/member-portal/rush/types";
@@ -85,7 +84,6 @@ function toParticipantMap(list: Array<{ userId: string; role: string }>) {
 
 export default function RushFormsPage() {
   const { permissions, user } = useAuthStore();
-  const canToggleForms = canManageRushForms(permissions);
   const { cycle, cycleParam, isPending: cyclesPending } = useSelectedCycle();
   const queryClient = useQueryClient();
 
@@ -111,7 +109,7 @@ export default function RushFormsPage() {
     queryKey: ["rush", "templates", "evaluation", cycleParam],
     queryFn: () =>
       rushFetch<{ templates: RushFormTemplate[] }>(`/api/rush/templates?cycleId=${cycleParam}`).then((r) =>
-        r.templates.filter((t) => t.kind === "evaluation" && t.is_active),
+        r.templates.filter((t) => t.kind === "evaluation"),
       ),
   });
   const mine = useQuery({
@@ -126,23 +124,13 @@ export default function RushFormsPage() {
     queryFn: () => rushFetch<EventsResponse>(`/api/rush/events?cycleId=${cycleParam}`),
   });
 
-  const setOpen = async (t: RushFormTemplate, isOpen: boolean) => {
-    try {
-      await rushFetch(`/api/rush/templates/${t.id}/open`, { method: "PATCH", json: { isOpen } });
-      toast.success(isOpen ? `${t.name} is open.` : `${t.name} is closed.`);
-      await queryClient.invalidateQueries({ queryKey: ["rush", "templates"] });
-    } catch (error) {
-      toast.error(errorMessage(error));
-    }
-  };
-
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return (directory.data ?? []).filter((p) => !q || p.name.toLowerCase().includes(q));
   }, [directory.data, search]);
 
   const template = templates.data?.find((t) => t.id === templateId) ?? null;
-  const editTemplate = editing ? templates.data?.find((t) => t.id === editing.templateId && t.is_open) : null;
+  const editTemplate = editing ? templates.data?.find((t) => t.id === editing.templateId && t.is_active) : null;
 
   const linkedEvents = (events.data?.events ?? []).filter((e) => template && e.formTemplateId === template.id);
   const isConflictForm = Boolean(template && conflictField(template));
@@ -250,12 +238,12 @@ export default function RushFormsPage() {
                         key={t.id}
                         className={cn(
                           "flex flex-col rounded-xl border bg-card transition-colors",
-                          t.is_open ? "hover:border-primary hover:bg-muted/40" : "opacity-70",
+                          t.is_active ? "hover:border-primary hover:bg-muted/40" : "opacity-70",
                         )}
                       >
                         <button
                           type="button"
-                          disabled={!t.is_open}
+                          disabled={!t.is_active}
                           onClick={() => {
                             setTemplateId(t.id);
                             setAnswers({});
@@ -271,7 +259,7 @@ export default function RushFormsPage() {
                         >
                           <span className="flex flex-wrap items-center gap-1.5 font-semibold">
                             {t.name}
-                            {!t.is_open ? <Badge variant="outline">Closed</Badge> : null}
+                            {!t.is_active ? <Badge variant="outline">Disabled</Badge> : null}
                             {t.hide_author_in_deliberation ? <Badge variant="secondary">Anonymous</Badge> : null}
                           </span>
                           {t.description ? <span className="text-sm text-muted-foreground">{t.description}</span> : null}
@@ -280,12 +268,6 @@ export default function RushFormsPage() {
                             {t.submission_mode === "multiple" ? " · shared by everyone in the room" : ""}
                           </span>
                         </button>
-                        {canToggleForms ? (
-                          <label className="flex items-center justify-between border-t px-4 py-2 text-xs text-muted-foreground">
-                            {t.is_open ? "Open to submissions" : "Closed to submissions"}
-                            <Switch checked={t.is_open} onCheckedChange={(v) => setOpen(t, v)} />
-                          </label>
-                        ) : null}
                       </div>
                     ))}
                   </div>
@@ -468,7 +450,7 @@ export default function RushFormsPage() {
               <FormRenderer fields={editTemplate.fields} values={editAnswers} onChange={setEditAnswers} cycleId={cycle?.id} />
             </>
           ) : (
-            <p className="text-sm text-muted-foreground">This form is closed and can&apos;t be edited.</p>
+            <p className="text-sm text-muted-foreground">This form is disabled and can&apos;t be edited.</p>
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditing(null)}>
