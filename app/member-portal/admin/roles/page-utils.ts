@@ -378,62 +378,21 @@ export async function persistRoleDrafts(params: {
     const draftSet = draftRolePermissions[roleId] ?? new Set<string>();
     if (areSetsEqual(baseSet, draftSet)) continue;
 
-    const deleteRes = await supabase
-      .from("role_permissions")
-      .delete()
-      .eq("role_id", roleId);
-    if (deleteRes.error) throw deleteRes.error;
-
-    if (draftSet.size > 0) {
-      const permissionKeys = [...draftSet];
-      const payloads: Array<Record<string, string>[]> = [];
-
-      const canUsePermissionId = permissionKeys.every((permissionKey) =>
-        permissionIdByKey.has(permissionKey),
-      );
-
-      if (canUsePermissionId) {
-        payloads.push(
-          permissionKeys.map((permissionKey) => ({
-            role_id: roleId,
-            permission_id: permissionIdByKey.get(permissionKey)!,
-          })),
-        );
+    const permissionIds = [...draftSet].map((permissionKey) => {
+      const permissionId = permissionIdByKey.get(permissionKey);
+      if (!permissionId) {
+        throw new Error(`Unknown permission "${permissionKey}".`);
       }
+      return permissionId;
+    });
 
-      payloads.push(
-        permissionKeys.map((permissionKey) => ({
-          role_id: roleId,
-          permission_key: permissionKey,
-        })),
-      );
-      payloads.push(
-        permissionKeys.map((permissionKey) => ({
-          role_id: roleId,
-          permission: permissionKey,
-        })),
-      );
-      payloads.push(
-        permissionKeys.map((permissionKey) => ({
-          role_id: roleId,
-          key: permissionKey,
-        })),
-      );
-
-      let inserted = false;
-      let lastError: unknown = null;
-
-      for (const payload of payloads) {
-        const insertRes = await supabase.from("role_permissions").insert(payload);
-        if (!insertRes.error) {
-          inserted = true;
-          break;
-        }
-        lastError = insertRes.error;
-      }
-
-      if (!inserted && lastError) throw lastError;
-    }
+    // Delete + insert run in one transaction server-side, so a failure can't
+    // leave the role with no permissions.
+    const { error } = await supabase.rpc("set_role_permissions", {
+      p_role_id: roleId,
+      p_permission_ids: permissionIds,
+    });
+    if (error) throw error;
   }
 }
 

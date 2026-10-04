@@ -4,7 +4,7 @@ import { DragEvent, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Plus, Shield } from "lucide-react";
 import { useAuthStore } from "@/lib/auth-store";
-import { canViewAdmin } from "@/lib/permissions";
+import { canEditRoles, canViewAdmin } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -53,6 +53,7 @@ import { UnsavedChangesBar } from "@/components/member-portal/admin/unsaved-chan
 export default function AdminRolesPage() {
   const { permissions: myPermissions } = useAuthStore();
   const isExec = canViewAdmin(myPermissions);
+  const canEdit = canEditRoles(myPermissions);
 
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -284,7 +285,9 @@ export default function AdminRolesPage() {
       await loadData();
     } catch (error) {
       console.error("Failed to save role changes:", error);
-      toast.error("Failed to save role changes.");
+      toast.error("Failed to save role changes.", {
+        description: error instanceof Error ? error.message : undefined,
+      });
     } finally {
       setIsSaving(false);
     }
@@ -344,13 +347,17 @@ export default function AdminRolesPage() {
         <div className="space-y-1">
           <h1 className="text-2xl font-bold md:text-3xl">Role Management</h1>
           <p className="text-sm text-muted-foreground">
-            Select a role to edit details and permissions.
+            {canEdit
+              ? "Select a role to edit details and permissions."
+              : "View only. Editing roles requires the admin.roles.edit permission."}
           </p>
         </div>
-        <Button onClick={openCreateDialog}>
-          <Plus className="mr-2 size-4" />
-          Create Role
-        </Button>
+        {canEdit ? (
+          <Button onClick={openCreateDialog}>
+            <Plus className="mr-2 size-4" />
+            Create Role
+          </Button>
+        ) : null}
       </div>
 
       {isLoading ? (
@@ -369,12 +376,14 @@ export default function AdminRolesPage() {
               Create a role to start managing access controls.
             </EmptyDescription>
           </EmptyHeader>
-          <EmptyContent>
-            <Button onClick={openCreateDialog}>
-              <Plus className="mr-2 size-4" />
-              Create Role
-            </Button>
-          </EmptyContent>
+          {canEdit ? (
+            <EmptyContent>
+              <Button onClick={openCreateDialog}>
+                <Plus className="mr-2 size-4" />
+                Create Role
+              </Button>
+            </EmptyContent>
+          ) : null}
         </Empty>
       ) : (
         <div className="relative flex-1 min-h-0">
@@ -384,6 +393,7 @@ export default function AdminRolesPage() {
               selectedRoleId={selectedRoleId}
               hasUnsavedChanges={hasUnsavedChanges}
               dropIndicator={dropIndicator}
+              canReorder={canEdit}
               onSelectRole={setSelectedRoleId}
               onBlockedSelect={() =>
                 toast.warning("Save or cancel changes before switching roles.")
@@ -405,6 +415,7 @@ export default function AdminRolesPage() {
                 permissions={permissions}
                 draftRolePermissions={draftRolePermissions}
                 isDeletingRole={isDeletingRole}
+                readOnly={!canEdit}
                 onUpdateRole={updateSelectedRole}
                 onToggleAllPermissions={handleToggleAllPermissions}
                 onTogglePermissionSection={handleTogglePermissionSection}

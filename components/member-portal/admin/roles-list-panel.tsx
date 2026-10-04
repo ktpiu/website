@@ -11,6 +11,7 @@ type RolesListPanelProps = {
   selectedRoleId: string | null;
   hasUnsavedChanges: boolean;
   dropIndicator: DropIndicator | null;
+  canReorder: boolean;
   onSelectRole: (roleId: string) => void;
   onBlockedSelect: () => void;
   onDragStartRole: (
@@ -28,6 +29,7 @@ export function RolesListPanel({
   selectedRoleId,
   hasUnsavedChanges,
   dropIndicator,
+  canReorder,
   onSelectRole,
   onBlockedSelect,
   onDragStartRole,
@@ -64,7 +66,7 @@ export function RolesListPanel({
                     ? "bg-accent text-accent-foreground"
                     : "bg-transparent text-foreground hover:bg-accent/60",
                 )}
-                draggable
+                draggable={canReorder}
                 onDragStart={(event) => onDragStartRole(role.id, event)}
                 onDragOver={(event) => onDragOverRole(role.id, event)}
                 onDragLeave={() => onDragLeaveRole(role.id)}

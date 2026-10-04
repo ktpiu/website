@@ -5,6 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 export const ADMIN_VIEW = "admin.view";
 export const ADMIN_FINANCE_VIEW = "admin.finance.view";
 export const ADMIN_FINANCE_EDIT = "admin.finance.edit";
+export const ADMIN_ROLES_EDIT = "admin.roles.edit";
 export const ADMIN_USERS_EDIT = "admin.users.edit";
 export const ADMIN_USERS_DELETE = "admin.users.delete";
 export const RUSH_VIEW = "rush.view";
@@ -77,6 +78,11 @@ export function canViewFinanceAdmin(permissions: Iterable<string> | null | undef
 /** Grants access to the core admin pages (Users, Roles and Permissions). */
 export function canViewAdmin(permissions: Iterable<string> | null | undefined) {
   return hasPermission(permissions, ADMIN_VIEW);
+}
+
+/** Matches the RLS on roles and role_permissions. */
+export function canEditRoles(permissions: Iterable<string> | null | undefined) {
+  return hasPermission(permissions, ADMIN_ROLES_EDIT);
 }
 
 export function canEditUsersAdmin(permissions: Iterable<string> | null | undefined) {

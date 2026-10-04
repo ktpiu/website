@@ -22,6 +22,7 @@ type RoleDetailsPanelProps = {
   permissions: PermissionRecord[];
   draftRolePermissions: Record<string, Set<string>>;
   isDeletingRole: boolean;
+  readOnly: boolean;
   onUpdateRole: (updates: Partial<RoleRecord>) => void;
   onToggleAllPermissions: (checked: boolean) => void;
   onTogglePermissionSection: (
@@ -38,6 +39,7 @@ export function RoleDetailsPanel({
   permissions,
   draftRolePermissions,
   isDeletingRole,
+  readOnly,
   onUpdateRole,
   onToggleAllPermissions,
   onTogglePermissionSection,
@@ -77,6 +79,7 @@ export function RoleDetailsPanel({
               Role Name <span className="text-destructive">*</span>
             </label>
             <Input
+              disabled={readOnly}
               value={selectedRole.name}
               onChange={(event) => onUpdateRole({ name: event.target.value })}
               placeholder="e.g. Events Director"
@@ -87,6 +90,7 @@ export function RoleDetailsPanel({
             <label className="text-sm font-medium">Description</label>
             <Textarea
               rows={4}
+              disabled={readOnly}
               value={selectedRole.description}
               onChange={(event) =>
                 onUpdateRole({ description: event.target.value })
@@ -99,6 +103,7 @@ export function RoleDetailsPanel({
             <label className="text-sm font-medium">Role Type</label>
             <RoleTypeSelect
               value={selectedRole.type}
+              disabled={readOnly}
               onChange={(type) => onUpdateRole({ type })}
             />
             <p className="text-xs text-muted-foreground">
@@ -118,21 +123,24 @@ export function RoleDetailsPanel({
               </p>
             </div>
             <Switch
+              disabled={readOnly}
               checked={selectedRole.hidden}
               onCheckedChange={(checked) => onUpdateRole({ hidden: checked })}
             />
           </div>
 
-          <div className="pt-2">
-            <Button
-              variant="destructive"
-              onClick={onOpenDeleteDialog}
-              disabled={isDeletingRole}
-            >
-              <Trash2 className="mr-2 size-4" />
-              Delete Role
-            </Button>
-          </div>
+          {readOnly ? null : (
+            <div className="pt-2">
+              <Button
+                variant="destructive"
+                onClick={onOpenDeleteDialog}
+                disabled={isDeletingRole}
+              >
+                <Trash2 className="mr-2 size-4" />
+                Delete Role
+              </Button>
+            </div>
+          )}
         </TabsContent>
 
         <TabsContent value="permissions" className="space-y-4">
@@ -145,6 +153,7 @@ export function RoleDetailsPanel({
               <div className="flex items-center justify-between border-b pb-3">
                 <p className="text-sm font-medium">Grant all permissions</p>
                 <Switch
+                  disabled={readOnly}
                   checked={permissions.every((permission) =>
                     Boolean(
                       draftRolePermissions[selectedRole.id]?.has(
@@ -163,6 +172,7 @@ export function RoleDetailsPanel({
                       {section}
                     </p>
                     <Switch
+                      disabled={readOnly}
                       checked={sectionPermissions.every((permission) =>
                         Boolean(
                           draftRolePermissions[selectedRole.id]?.has(
@@ -186,6 +196,7 @@ export function RoleDetailsPanel({
                         </p>
                       </div>
                       <Switch
+                        disabled={readOnly}
                         checked={Boolean(
                           draftRolePermissions[selectedRole.id]?.has(
                             permission.key,
