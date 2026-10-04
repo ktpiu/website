@@ -64,6 +64,7 @@ export async function GET() {
             cycleId: session.cycle_id,
             showAllAuthors: false,
             includeContact: false,
+            includeDelibData: true,
           })
         : Promise.resolve(null),
       session.current_pnm_id
@@ -108,6 +109,8 @@ export async function GET() {
               attendance: presenting.attendance,
               applications: presenting.applications,
               responses: presenting.responses,
+              events: presenting.events ?? [],
+              conflicts: presenting.conflicts ?? [],
             }
           : null,
         round: round

@@ -216,7 +216,7 @@ export default function RushSettingsPage() {
             onClick={() =>
               setEditing({
                 id: null,
-                draft: { name: "", description: "", kind: "evaluation", hideAuthorInDeliberation: false, isActive: true, fields: [] },
+                draft: { name: "", description: "", kind: "evaluation", hideAuthorInDeliberation: false, isActive: true, submissionMode: "single", participantRoles: [], fields: [] },
               })
             }
           >
@@ -238,8 +238,23 @@ export default function RushSettingsPage() {
                       </span>
                     </p>
                   </div>
+                  {t.submission_mode === "multiple" ? <Badge variant="secondary">Multi-person</Badge> : null}
                   {!t.is_active ? <Badge variant="outline">Archived</Badge> : null}
-                  {t.hide_author_in_deliberation ? <Badge variant="secondary">Anonymous in deliberation</Badge> : null}
+                  {t.kind === "evaluation" && t.is_active ? (
+                    <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <Switch
+                        checked={t.is_open}
+                        onCheckedChange={(isOpen) =>
+                          run(
+                            () => rushFetch(`/api/rush/templates/${t.id}/open`, { method: "PATCH", json: { isOpen } }),
+                            isOpen ? `${t.name} is open.` : `${t.name} is closed.`,
+                          )
+                        }
+                      />
+                      {t.is_open ? "Open" : "Closed"}
+                    </label>
+                  ) : null}
+                  {t.hide_author_in_deliberation ? <Badge variant="secondary">Anonymous</Badge> : null}
                   <Button
                     variant="ghost"
                     size="icon"
@@ -254,6 +269,8 @@ export default function RushSettingsPage() {
                           kind: t.kind,
                           hideAuthorInDeliberation: t.hide_author_in_deliberation,
                           isActive: t.is_active,
+                          submissionMode: t.submission_mode,
+                          participantRoles: t.participant_roles,
                           fields: t.fields,
                         },
                       })

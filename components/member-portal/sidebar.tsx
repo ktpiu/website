@@ -24,6 +24,7 @@ import {
   Contact,
   CalendarCog,
   Settings2,
+  UserCheck,
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { prefetchRushPage, useCycleParam } from "@/components/member-portal/rush/shared";
@@ -54,6 +55,8 @@ import { useAuthStore } from "@/lib/auth-store";
 import Link from "next/link";
 import {
   canManageRush,
+  canManageRushForms,
+  canViewActiveAttendance,
   canViewAdmin,
   canViewFinanceAdmin,
   canViewRush,
@@ -154,11 +157,18 @@ export function MemberPortalSidebar() {
     queryKey: ["rush", "nav"],
     queryFn: async () => {
       const response = await fetch("/api/rush/nav", { cache: "no-store" });
-      if (!response.ok) return { deliberationLive: false, unmatchedPending: 0 };
-      return (await response.json()) as { deliberationLive: boolean; unmatchedPending: number };
+      if (!response.ok) return { deliberationLive: false, unmatchedPending: 0, cyclePhase: null };
+      return (await response.json()) as {
+        deliberationLive: boolean;
+        unmatchedPending: number;
+        cyclePhase: "open" | "closed" | "concluded" | null;
+      };
     },
     refetchInterval: 60_000,
   });
+  // Once the cycle has concluded, only people who run rush keep the tabs.
+  const showRushGroup =
+    rushNav.data?.cyclePhase !== "concluded" || canManageRushForms(permissions) || canViewActiveAttendance(permissions);
   const rushItems = [
     { icon: CalendarRange, label: "Schedule", href: "/member-portal/rush/schedule" },
     { icon: ClipboardPen, label: "PNM Forms", href: "/member-portal/rush/forms" },
@@ -169,6 +179,9 @@ export function MemberPortalSidebar() {
       live: Boolean(rushNav.data?.deliberationLive),
     },
     ...(rushView ? [{ icon: Contact, label: "PNMs", href: "/member-portal/rush/pnms" }] : []),
+    ...(canViewActiveAttendance(permissions)
+      ? [{ icon: UserCheck, label: "Active Attendance", href: "/member-portal/rush/attendance" }]
+      : []),
     ...(rushManage
       ? [
           {
@@ -215,6 +228,7 @@ export function MemberPortalSidebar() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+        {showRushGroup ? (
         <SidebarGroup>
           <SidebarGroupLabel>Rush</SidebarGroupLabel>
           <SidebarGroupContent>
@@ -245,6 +259,7 @@ export function MemberPortalSidebar() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+        ) : null}
         {showAdminGroup && (
           <SidebarGroup>
             <SidebarGroupLabel>Admin</SidebarGroupLabel>

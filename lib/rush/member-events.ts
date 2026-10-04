@@ -28,15 +28,18 @@ export async function loadMemberEvents(
   const events = (eventRows ?? []) as RushEventRecord[];
   const eventIds = events.map((e) => e.id);
   const empty = Promise.resolve({ data: [], error: null });
-  const [slotsRes, signupsRes, attendanceRes, unmatchedRes] = await Promise.all([
+  const [slotsRes, signupsRes, attendanceRes, unmatchedRes, pnmMarksRes] = await Promise.all([
     eventIds.length ? supabaseAdmin.from("rush_event_slots").select("*").in("event_id", eventIds).order("starts_at") : empty,
     eventIds.length ? supabaseAdmin.from("rush_slot_signups").select("id, slot_id, pnm_id, user_id").in("event_id", eventIds) : empty,
-    view && eventIds.length ? supabaseAdmin.from("rush_event_attendance").select("event_id").in("event_id", eventIds) : empty,
+    view && eventIds.length ? supabaseAdmin.from("rush_event_attendance").select("event_id").in("event_id", eventIds).not("pnm_id", "is", null).neq("status", "no_show") : empty,
     manage && eventIds.length
       ? supabaseAdmin.from("rush_unmatched_checkins").select("event_id").in("event_id", eventIds).eq("status", "pending")
       : empty,
+    eventIds.length
+      ? supabaseAdmin.from("rush_event_attendance").select("event_id, pnm_id, status").in("event_id", eventIds).not("pnm_id", "is", null)
+      : empty,
   ]);
-  for (const res of [slotsRes, signupsRes, attendanceRes, unmatchedRes]) if (res.error) throw res.error;
+  for (const res of [slotsRes, signupsRes, attendanceRes, unmatchedRes, pnmMarksRes]) if (res.error) throw res.error;
 
   const slots = (slotsRes.data ?? []) as RushSlotRecord[];
   const signups = (signupsRes.data ?? []) as SignupRow[];
@@ -70,6 +73,16 @@ export async function loadMemberEvents(
   const unmatchedCounts = count((unmatchedRes.data ?? []) as Array<{ event_id: string }>);
   const siteUrl = getSiteUrl(request);
   const me = context.appUser.id;
+  const marks = new Map(
+    ((pnmMarksRes.data ?? []) as Array<{ event_id: string; pnm_id: string; status: string }>).map((m) => [
+      `${m.event_id}:${m.pnm_id}`,
+      m.status,
+    ]),
+  );
+  const signedUpEvents = new Set(signups.filter((s) => s.user_id === me).map((s) => events.find((e) => e.id === slots.find((sl) => sl.id === s.slot_id)?.event_id)?.id));
+  /** Managers always; signed-up actives only when QR check-in isn't the way in. */
+  const canMark = (event: RushEventRecord) =>
+    manage || (signedUpEvents.has(event.id) && !(event.attendance_enabled && event.qr_checkin_enabled));
 
   return events.map((event) => ({
         id: event.id,
@@ -89,7 +102,11 @@ export async function loadMemberEvents(
         selfChangeMode: event.self_change_mode,
         changeCutoffMinutes: event.change_cutoff_minutes,
         slotGrid: event.slot_grid,
+        formTemplateId: event.form_template_id,
+        attendanceEnabled: event.attendance_enabled,
+        qrCheckinEnabled: event.qr_checkin_enabled,
         ...(manage ? { checkinUrl: `${siteUrl}/rush/check-in/${event.checkin_token}` } : {}),
+        canMarkPnms: canMark(event),
         attendanceCount: view ? attendanceCounts.get(event.id) ?? 0 : undefined,
         unmatchedCount: manage ? unmatchedCounts.get(event.id) ?? 0 : undefined,
         slots: slots
@@ -108,7 +125,15 @@ export async function loadMemberEvents(
               pnms: here.flatMap((s) => {
                 const p = s.pnm_id ? pnms.get(s.pnm_id) : null;
                 return p
-                  ? [{ signupId: s.id, pnmId: p.id, name: p.name, photoUrl: p.photo_path ? urls.get(p.photo_path) ?? null : null }]
+                  ? [
+                      {
+                        signupId: s.id,
+                        pnmId: p.id,
+                        name: p.name,
+                        photoUrl: p.photo_path ? urls.get(p.photo_path) ?? null : null,
+                        attendance: canMark(event) || view ? marks.get(`${event.id}:${p.id}`) ?? null : null,
+                      },
+                    ]
                   : [];
               }),
               actives: here.flatMap((s) => {

@@ -21,6 +21,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { NativeSelect } from "@/components/rush/native-select";
 import { PnmAvatar } from "@/components/rush/pnm-avatar";
 import { SlotGrid } from "@/components/rush/slot-grid";
+import { AttendanceChip } from "@/components/rush/attendance-mark";
+import type { AttendanceStatus } from "@/lib/rush/types";
 import { AccessRequired } from "@/components/member-portal/rush/shared";
 import { EventForm, eventToForm, formToPayload, type EventFormValues } from "@/components/member-portal/rush/event-form";
 import type { MemberEvent, MemberSlot } from "@/components/member-portal/rush/types";
@@ -29,7 +31,8 @@ import { AVATAR_ACCEPT } from "@/lib/avatar-upload";
 import { errorMessage, formatDateTime, formatRange, formatTime, fromLocalInput, rushFetch, toLocalInput } from "@/lib/rush/client";
 
 type AttendanceData = {
-  attendance: Array<{ id: string; method: string; checkedInAt: string; pnm: { id: string; name: string; email: string; photoUrl: string | null } }>;
+  attendance: Array<{ id: string; method: string; status: AttendanceStatus; checkedInAt: string; pnm: { id: string; name: string; email: string; photoUrl: string | null } }>;
+  actives: Array<{ id: string; method: string; status: AttendanceStatus; checkedInAt: string; user: { id: string; name: string; avatar: string | null } }>;
   unmatched: Array<{
     id: string;
     name: string;
@@ -117,6 +120,7 @@ export default function RushEventDetailPage({ params }: { params: Promise<{ even
   const event = eventQuery.data;
   const attendance = attendanceQuery.data;
   const checkedInIds = new Set((attendance?.attendance ?? []).map((a) => a.pnm.id));
+  const presentCount = (attendance?.attendance ?? []).filter((a) => a.status !== "no_show").length;
 
   const saveDetails = () =>
     run(() => rushFetch(`/api/rush/events/${event.id}`, { method: "PATCH", json: formToPayload(form) }), "Event saved.");
@@ -191,7 +195,7 @@ export default function RushEventDetailPage({ params }: { params: Promise<{ even
         <TabsList className="flex-wrap">
           <TabsTrigger value="checkin">Check-in</TabsTrigger>
           <TabsTrigger value="attendance">
-            Attendance ({attendance?.attendance.length ?? 0})
+            Attendance ({presentCount})
             {attendance?.unmatched.length ? (
               <Badge className="ml-1.5 bg-amber-500 px-1.5 text-white">{attendance.unmatched.length}</Badge>
             ) : null}
@@ -363,7 +367,7 @@ export default function RushEventDetailPage({ params }: { params: Promise<{ even
 
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-base">Checked in ({attendance?.attendance.length ?? 0})</CardTitle>
+              <CardTitle className="text-base">Checked in ({presentCount})</CardTitle>
             </CardHeader>
             <CardContent>
               {!attendance ? (
@@ -379,7 +383,7 @@ export default function RushEventDetailPage({ params }: { params: Promise<{ even
                         <span>
                           <span className="font-medium">{a.pnm.name}</span>
                           <span className="block text-xs text-muted-foreground">
-                            {formatTime(a.checkedInAt)} · {a.method}
+                            {formatTime(a.checkedInAt)} · {a.method} {a.status !== "present" ? <AttendanceChip status={a.status} /> : null}
                           </span>
                         </span>
                       </Link>

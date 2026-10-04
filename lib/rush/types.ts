@@ -29,7 +29,17 @@ export type RushCycle = {
   created_at: string;
 };
 
-export type RushFieldType = "text" | "textarea" | "rating" | "select" | "yesno";
+export type RushFieldType = "text" | "textarea" | "rating" | "select" | "yesno" | "people";
+export type PeopleSource = "actives" | "pnms" | "both";
+export type PeopleConfig = {
+  source: PeopleSource;
+  multiple: boolean;
+  /** Selected people are reported as conflicts of interest in deliberation. */
+  conflict?: boolean;
+};
+export type AttendanceStatus = "present" | "late" | "no_show";
+export type ParticipantRole = { id: string; label: string; required: boolean };
+export type ResponseParticipant = { userId: string; role: string };
 
 export type RushFormField = {
   id: string;
@@ -38,6 +48,7 @@ export type RushFormField = {
   required: boolean;
   options?: string[];
   help?: string;
+  people?: PeopleConfig;
 };
 
 export type RushFormTemplate = {
@@ -48,11 +59,32 @@ export type RushFormTemplate = {
   fields: RushFormField[];
   hide_author_in_deliberation: boolean;
   is_active: boolean;
+  is_open: boolean;
+  submission_mode: "single" | "multiple";
+  participant_roles: ParticipantRole[];
   sort_order: number;
   cycle_id: string | null;
 };
 
-export type RushAnswerValue = string | number | boolean;
+/** People answers are stored as "user:<id>" / "pnm:<id>" strings. */
+export type RushAnswerValue = string | number | boolean | string[];
+
+export const personKey = (kind: "user" | "pnm", id: string) => `${kind}:${id}`;
+export function parsePersonKey(key: string): { kind: "user" | "pnm"; id: string } | null {
+  const [kind, ...rest] = key.split(":");
+  const id = rest.join(":");
+  return (kind === "user" || kind === "pnm") && id ? { kind, id } : null;
+}
+
+export function parseParticipantRoles(value: unknown): ParticipantRole[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((raw) => {
+    if (!raw || typeof raw !== "object") return [];
+    const r = raw as Record<string, unknown>;
+    if (typeof r.id !== "string" || typeof r.label !== "string" || !r.label.trim()) return [];
+    return [{ id: r.id, label: r.label.trim(), required: Boolean(r.required) }];
+  });
+}
 export type RushAnswers = Record<string, RushAnswerValue>;
 
 export type RushEventRecord = {
@@ -74,6 +106,9 @@ export type RushEventRecord = {
   self_change_mode: SelfChangeMode;
   change_cutoff_minutes: number;
   slot_grid: SlotGrid;
+  form_template_id: string | null;
+  attendance_enabled: boolean;
+  qr_checkin_enabled: boolean;
 };
 
 export type RushSlotRecord = {
@@ -94,6 +129,13 @@ export const FIELD_TYPE_LABELS: Record<RushFieldType, string> = {
   rating: "Rating (1–5)",
   select: "Multiple choice",
   yesno: "Yes / No",
+  people: "People selector",
+};
+
+export const ATTENDANCE_LABELS: Record<AttendanceStatus, string> = {
+  present: "Present",
+  late: "Late",
+  no_show: "No-show",
 };
 
 export const GROUP_LABELS: Record<DelibGroup, string> = {
@@ -135,7 +177,10 @@ export function validateAnswers(fields: RushFormField[], answers: RushAnswers) {
   for (const field of fields) {
     const value = answers[field.id];
     const empty =
-      value === undefined || value === null || (typeof value === "string" && value.trim() === "");
+      value === undefined ||
+      value === null ||
+      (typeof value === "string" && value.trim() === "") ||
+      (Array.isArray(value) && value.length === 0);
     if (empty) {
       if (field.required) errors[field.id] = "This question is required.";
       continue;
@@ -152,6 +197,13 @@ export function validateAnswers(fields: RushFormField[], answers: RushAnswers) {
       case "yesno":
         if (typeof value !== "boolean") errors[field.id] = "Answer yes or no.";
         break;
+      case "people":
+        if (!Array.isArray(value) || value.some((v) => typeof v !== "string" || !parsePersonKey(v))) {
+          errors[field.id] = "Choose from the list.";
+        } else if (!field.people?.multiple && value.length > 1) {
+          errors[field.id] = "Choose one person.";
+        }
+        break;
       default:
         if (typeof value !== "string" || value.length > 5000) errors[field.id] = "Answer is too long.";
     }
@@ -166,7 +218,12 @@ export function sanitizeAnswers(fields: RushFormField[], answers: unknown): Rush
   const source = answers as Record<string, unknown>;
   for (const field of fields) {
     const value = source[field.id];
-    if (typeof value === "string") {
+    if (field.type === "people") {
+      if (Array.isArray(value)) {
+        const keys = Array.from(new Set(value.filter((v): v is string => typeof v === "string" && Boolean(parsePersonKey(v)))));
+        if (keys.length) result[field.id] = keys;
+      }
+    } else if (typeof value === "string") {
       const trimmed = value.trim();
       if (trimmed) result[field.id] = field.type === "rating" ? Number(trimmed) : trimmed;
     } else if (typeof value === "number" || typeof value === "boolean") {
@@ -195,6 +252,14 @@ export function parseFields(value: unknown): RushFormField[] {
       field.options = f.options.filter((o): o is string => typeof o === "string" && o.trim() !== "");
     }
     if (typeof f.help === "string" && f.help.trim()) field.help = f.help;
+    if (field.type === "people") {
+      const p = (f.people && typeof f.people === "object" ? f.people : {}) as Record<string, unknown>;
+      field.people = {
+        source: p.source === "actives" || p.source === "both" ? p.source : "pnms",
+        multiple: p.multiple !== false,
+        conflict: Boolean(p.conflict),
+      };
+    }
     return [field];
   });
 }
@@ -203,6 +268,7 @@ export function formatAnswer(field: RushFormField, value: RushAnswerValue | unde
   if (value === undefined || value === "") return "—";
   if (field.type === "yesno") return value ? "Yes" : "No";
   if (field.type === "rating") return `${value} / 5`;
+  if (Array.isArray(value)) return value.join(", ") || "—";
   return String(value);
 }
 

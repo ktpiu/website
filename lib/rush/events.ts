@@ -40,6 +40,9 @@ export function parseEventBody(body: Record<string, unknown>, partial: boolean) 
   if (has("activesMultiSlot")) patch.actives_multi_slot = Boolean(body.activesMultiSlot);
   if (has("selfChangeMode")) patch.self_change_mode = body.selfChangeMode === "admin_only" ? "admin_only" : "cutoff";
   if (has("slotGrid")) patch.slot_grid = body.slotGrid === "location_rows" ? "location_rows" : "time_rows";
+  if (has("formTemplateId")) patch.form_template_id = optStr(body.formTemplateId, 64);
+  if (has("attendanceEnabled")) patch.attendance_enabled = body.attendanceEnabled !== false;
+  if (has("qrCheckinEnabled")) patch.qr_checkin_enabled = body.qrCheckinEnabled !== false;
   if (has("changeCutoffMinutes")) {
     const n = Number(body.changeCutoffMinutes ?? 0);
     if (!Number.isInteger(n) || n < 0 || n > 60 * 24 * 30) {

@@ -11,7 +11,7 @@ export type MemberSlot = {
   notes: string | null;
   pnmCapacity: number;
   activeCapacity: number;
-  pnms: Array<SlotPerson & { pnmId: string; photoUrl: string | null }>;
+  pnms: Array<SlotPerson & { pnmId: string; photoUrl: string | null; attendance: "present" | "late" | "no_show" | null }>;
   actives: Array<SlotPerson & { userId: string; avatar: string | null; isMe: boolean }>;
 };
 
@@ -33,6 +33,10 @@ export type MemberEvent = {
   selfChangeMode: "cutoff" | "admin_only";
   changeCutoffMinutes: number;
   slotGrid: "time_rows" | "location_rows";
+  formTemplateId: string | null;
+  attendanceEnabled: boolean;
+  qrCheckinEnabled: boolean;
+  canMarkPnms: boolean;
   checkinUrl?: string;
   attendanceCount?: number;
   unmatchedCount?: number;

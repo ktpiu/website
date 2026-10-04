@@ -3,16 +3,17 @@ import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireAppAuthContext } from "@/lib/server-auth";
 import { canManageRush } from "@/lib/permissions";
 import { getActiveSession } from "@/lib/rush/deliberation";
-import { rushErrorResponse } from "@/lib/rush/server";
+import { getActiveCycle, rushErrorResponse } from "@/lib/rush/server";
 
 export const dynamic = "force-dynamic";
 
-/** Sidebar badges: live deliberation and (for managers) check-ins to reconcile. */
+/** Sidebar state: live deliberation, check-ins to reconcile (managers) and the cycle phase. */
 export async function GET() {
   try {
     const context = await requireAppAuthContext();
-    const [session, unmatched] = await Promise.all([
+    const [session, cycle, unmatched] = await Promise.all([
       getActiveSession(),
+      getActiveCycle(),
       canManageRush(context.permissions)
         ? supabaseAdmin
             .from("rush_unmatched_checkins")
@@ -22,7 +23,7 @@ export async function GET() {
     ]);
     if (unmatched.error) throw unmatched.error;
     return NextResponse.json(
-      { deliberationLive: Boolean(session), unmatchedPending: unmatched.count ?? 0 },
+      { deliberationLive: Boolean(session), unmatchedPending: unmatched.count ?? 0, cyclePhase: cycle?.phase ?? null },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {

@@ -30,8 +30,12 @@ import { TransitionDialog } from "@/components/member-portal/rush/transition-dia
 import {
   ApplicationsCard,
   AttendanceCard,
+  ConflictsCard,
+  EventRosterCard,
   ResponsesCard,
   type DossierApplication,
+  type DossierConflicts,
+  type DossierDelibEvent,
   type DossierAttendance,
   type DossierResponses,
 } from "@/components/member-portal/rush/dossier-view";
@@ -63,6 +67,8 @@ type Current = {
     attendance: DossierAttendance;
     applications: DossierApplication[];
     responses: DossierResponses;
+    events: DossierDelibEvent[];
+    conflicts: DossierConflicts;
   } | null;
   round?: Round | null;
   myChoice?: VoteChoice | null;
@@ -289,6 +295,8 @@ function Presenting({ data }: { data: Current }) {
         <AttendanceCard attendance={p.attendance} />
         <ApplicationsCard applications={p.applications} />
       </div>
+      <ConflictsCard conflicts={p.conflicts} />
+      <EventRosterCard events={p.events} />
       <ResponsesCard responses={p.responses} />
     </div>
   );

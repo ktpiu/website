@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { NativeSelect } from "@/components/rush/native-select";
-import { FIELD_TYPE_LABELS, type RushFieldType, type RushFormField } from "@/lib/rush/types";
+import { FIELD_TYPE_LABELS, type ParticipantRole, type PeopleSource, type RushFieldType, type RushFormField } from "@/lib/rush/types";
 
 export type TemplateDraft = {
   name: string;
@@ -15,6 +15,8 @@ export type TemplateDraft = {
   kind: "evaluation" | "application";
   hideAuthorInDeliberation: boolean;
   isActive: boolean;
+  submissionMode: "single" | "multiple";
+  participantRoles: ParticipantRole[];
   fields: RushFormField[];
 };
 
@@ -72,6 +74,87 @@ export function FormBuilder({ draft, onChange }: { draft: TemplateDraft; onChang
         ) : null}
       </div>
 
+      {draft.kind === "evaluation" ? (
+        <div className="space-y-3 rounded-lg border p-3">
+          <div className="space-y-2">
+            <Label htmlFor="tpl-mode">Who submits</Label>
+            <NativeSelect
+              id="tpl-mode"
+              value={draft.submissionMode}
+              onChange={(e) => {
+                const submissionMode = e.target.value as TemplateDraft["submissionMode"];
+                onChange({
+                  ...draft,
+                  submissionMode,
+                  participantRoles:
+                    submissionMode === "multiple" && draft.participantRoles.length === 0
+                      ? [{ id: newFieldId(), label: "Actives in the room", required: true }]
+                      : draft.participantRoles,
+                });
+              }}
+            >
+              <option value="single">One person submits their own</option>
+              <option value="multiple">Several people share one submission (e.g. interviews)</option>
+            </NativeSelect>
+          </div>
+          {draft.submissionMode === "multiple" ? (
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">
+                The submitter picks who was in the room for each role. One submission counts once toward averages.
+              </p>
+              {draft.participantRoles.map((role, index) => (
+                <div key={role.id} className="flex flex-wrap items-center gap-2">
+                  <Input
+                    className="min-w-40 flex-1"
+                    placeholder="Role, e.g. Interviewers"
+                    value={role.label}
+                    onChange={(e) =>
+                      onChange({
+                        ...draft,
+                        participantRoles: draft.participantRoles.map((r, i) => (i === index ? { ...r, label: e.target.value } : r)),
+                      })
+                    }
+                  />
+                  <label className="flex items-center gap-1.5 text-xs">
+                    <Switch
+                      checked={role.required}
+                      onCheckedChange={(required) =>
+                        onChange({
+                          ...draft,
+                          participantRoles: draft.participantRoles.map((r, i) => (i === index ? { ...r, required } : r)),
+                        })
+                      }
+                    />
+                    Required
+                  </label>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    aria-label="Remove role"
+                    onClick={() => onChange({ ...draft, participantRoles: draft.participantRoles.filter((_, i) => i !== index) })}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  onChange({
+                    ...draft,
+                    participantRoles: [...draft.participantRoles, { id: newFieldId(), label: "", required: false }],
+                  })
+                }
+              >
+                <Plus className="mr-1.5 h-4 w-4" /> Add role
+              </Button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       <div className="space-y-3">
         <p className="text-sm font-medium">Questions</p>
         {draft.fields.map((field, index) => (
@@ -88,7 +171,11 @@ export function FormBuilder({ draft, onChange }: { draft: TemplateDraft; onChang
                 value={field.type}
                 onChange={(e) => {
                   const type = e.target.value as RushFieldType;
-                  setField(index, { type, options: type === "select" ? field.options ?? ["Option 1", "Option 2"] : undefined });
+                  setField(index, {
+                    type,
+                    options: type === "select" ? field.options ?? ["Option 1", "Option 2"] : undefined,
+                    people: type === "people" ? field.people ?? { source: "pnms", multiple: true } : undefined,
+                  });
                 }}
                 aria-label="Answer type"
               >
@@ -127,6 +214,56 @@ export function FormBuilder({ draft, onChange }: { draft: TemplateDraft; onChang
                 </Button>
               </div>
             </div>
+            {field.type === "people" ? (
+              <div className="flex flex-wrap items-center gap-4 text-sm">
+                <NativeSelect
+                  className="w-48"
+                  aria-label="Who can be selected"
+                  value={field.people?.source ?? "pnms"}
+                  onChange={(e) =>
+                    setField(index, {
+                      people: { multiple: true, ...field.people, source: e.target.value as PeopleSource },
+                    })
+                  }
+                >
+                  <option value="pnms">PNMs in this cycle</option>
+                  <option value="actives">Actives</option>
+                  <option value="both">Actives and PNMs</option>
+                </NativeSelect>
+                <label className="flex items-center gap-1.5 text-xs">
+                  <Switch
+                    checked={field.people?.multiple ?? true}
+                    onCheckedChange={(multiple) =>
+                      setField(index, { people: { source: "pnms", ...field.people, multiple } })
+                    }
+                  />
+                  Allow several
+                </label>
+                {draft.kind === "evaluation" ? (
+                  field.people?.source === "pnms" ? (
+                    <label className="flex items-center gap-1.5 text-xs">
+                      <Switch
+                        checked={Boolean(field.people?.conflict)}
+                        onCheckedChange={(conflict) =>
+                          setField(index, { people: { source: "pnms", multiple: true, ...field.people, conflict } })
+                        }
+                      />
+                      Report as conflicts of interest
+                    </label>
+                  ) : null
+                ) : field.people?.source === "actives" ? (
+                  <label className="flex items-center gap-1.5 text-xs">
+                    <Switch
+                      checked={Boolean(field.people?.conflict)}
+                      onCheckedChange={(conflict) =>
+                        setField(index, { people: { source: "actives", multiple: true, ...field.people, conflict } })
+                      }
+                    />
+                    Report as conflicts of interest
+                  </label>
+                ) : null}
+              </div>
+            ) : null}
             {field.type === "select" ? (
               <Textarea
                 rows={3}

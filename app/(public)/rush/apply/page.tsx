@@ -20,6 +20,7 @@ type ApplicationInfo = {
   cycleLabel: string | null;
   template: { name: string; description: string; fields: RushFormField[] } | null;
   prefill: { name: string; email: string } | null;
+  draft: { name: string; answers: RushAnswers; updatedAt: string } | null;
 };
 
 export default function ApplyPage() {
@@ -37,6 +38,39 @@ export default function ApplyPage() {
   const [result, setResult] = useState<{ hasAccount: boolean } | null>(null);
   const [resent, setResent] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
+  const [savingDraft, setSavingDraft] = useState(false);
+  const loadedDraft = useRef(false);
+  // Drafts are only available when signed into a rush account.
+  const canSaveDraft = Boolean(info?.prefill);
+
+  const saveDraft = async (quiet = false) => {
+    if (!canSaveDraft) return;
+    setSavingDraft(true);
+    try {
+      const { savedAt: at } = await rushFetch<{ savedAt: string }>("/api/rush/apply/draft", {
+        method: "PUT",
+        json: { name, answers },
+      });
+      setSavedAt(at);
+    } catch (err) {
+      if (!quiet) setError(errorMessage(err));
+    } finally {
+      setSavingDraft(false);
+    }
+  };
+
+  // Autosave a couple of seconds after the applicant stops typing.
+  useEffect(() => {
+    if (!canSaveDraft || result) return;
+    if (!loadedDraft.current) {
+      loadedDraft.current = true;
+      return;
+    }
+    const timer = setTimeout(() => void saveDraft(true), 2000);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [answers, name]);
 
   useEffect(() => {
     rushFetch<ApplicationInfo>("/api/rush/apply")
@@ -46,8 +80,13 @@ export default function ApplyPage() {
           setName(data.prefill.name);
           setEmail(data.prefill.email);
         }
+        if (data.draft) {
+          setAnswers(data.draft.answers ?? {});
+          if (data.draft.name) setName(data.draft.name);
+          setSavedAt(data.draft.updatedAt);
+        }
       })
-      .catch(() => setInfo({ open: false, cycleLabel: null, template: null, prefill: null }));
+      .catch(() => setInfo({ open: false, cycleLabel: null, template: null, prefill: null, draft: null }));
   }, []);
 
   useEffect(() => {
@@ -228,7 +267,7 @@ export default function ApplyPage() {
                 </div>
                 <IuEmailWarning email={email} />
 
-                <FormRenderer fields={info.template.fields} values={answers} onChange={setAnswers} errors={fieldErrors} />
+                <FormRenderer fields={info.template.fields} values={answers} onChange={setAnswers} errors={fieldErrors} publicMode />
 
                 <input
                   type="text"
@@ -242,10 +281,33 @@ export default function ApplyPage() {
                 />
 
                 {error ? <p className="text-sm text-destructive">{error}</p> : null}
-                <Button type="submit" size="lg" className="w-full sm:w-auto" disabled={submitting}>
-                  {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                  Submit application
-                </Button>
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button type="submit" size="lg" className="w-full sm:w-auto" disabled={submitting}>
+                    {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                    Submit application
+                  </Button>
+                  {canSaveDraft ? (
+                    <>
+                      <Button type="button" variant="outline" size="lg" disabled={savingDraft} onClick={() => void saveDraft()}>
+                        {savingDraft ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                        Save draft
+                      </Button>
+                      {savedAt ? (
+                        <span className="text-xs text-muted-foreground">
+                          Draft saved {new Date(savedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                          . Your photo isn&apos;t saved with drafts.
+                        </span>
+                      ) : null}
+                    </>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">
+                      <Link href="/rush/portal" className="underline">
+                        Sign in to your rush account
+                      </Link>{" "}
+                      to save your progress.
+                    </span>
+                  )}
+                </div>
               </form>
             </CardContent>
           </Card>

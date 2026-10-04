@@ -11,6 +11,8 @@ export const ADMIN_USERS_DELETE = "admin.users.delete";
 export const RUSH_VIEW = "rush.view";
 export const RUSH_MANAGE = "rush.manage";
 export const RUSH_DELIBERATION_MANAGE = "rush.deliberation.manage";
+export const RUSH_FORMS_MANAGE = "rush.forms.manage";
+export const RUSH_ATTENDANCE_VIEW_ACTIVES = "rush.attendance.view_actives";
 
 type RolePermissionRowLike = {
   role_id?: string | null;
@@ -105,6 +107,16 @@ export function canViewRush(permissions: Iterable<string> | null | undefined) {
 /** Cycles, events, timeslots, form templates, contacts and PNM edits. */
 export function canManageRush(permissions: Iterable<string> | null | undefined) {
   return hasPermission(permissions, RUSH_MANAGE);
+}
+
+/** Opens and closes rush forms. Rush managers can too. */
+export function canManageRushForms(permissions: Iterable<string> | null | undefined) {
+  return hasAnyPermission(permissions, [RUSH_FORMS_MANAGE, RUSH_MANAGE]);
+}
+
+/** Views and tracks active member attendance at rush events. */
+export function canViewActiveAttendance(permissions: Iterable<string> | null | undefined) {
+  return hasAnyPermission(permissions, [RUSH_ATTENDANCE_VIEW_ACTIVES, RUSH_MANAGE]);
 }
 
 /** Runs deliberation sessions and sees voting history. */

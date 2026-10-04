@@ -35,7 +35,7 @@ export async function GET(_request: Request, { params }: Params) {
     const [attendanceRes, unmatchedRes, cyclePnmsRes] = await Promise.all([
       supabaseAdmin
         .from("rush_event_attendance")
-        .select("id, method, checked_in_at, slot_id, pnms(id, name, email, photo_path)")
+        .select("id, method, status, checked_in_at, slot_id, user_id, pnms(id, name, email, photo_path), users(id, name, avatar)")
         .eq("event_id", event.id)
         .order("checked_in_at"),
       canManageRush(context.permissions)
@@ -56,11 +56,15 @@ export async function GET(_request: Request, { params }: Params) {
     type Row = {
       id: string;
       method: string;
+      status: string;
       checked_in_at: string;
       slot_id: string | null;
+      user_id: string | null;
       pnms: { id: string; name: string; email: string; photo_path: string | null } | null;
+      users: { id: string; name: string; avatar: string | null } | null;
     };
-    const rows = ((attendanceRes.data ?? []) as unknown as Row[]).filter((r) => r.pnms);
+    const all = (attendanceRes.data ?? []) as unknown as Row[];
+    const rows = all.filter((r) => r.pnms);
     const urls = await signRushPaths(rows.map((r) => r.pnms!.photo_path));
     const cyclePnms = ((cyclePnmsRes.data ?? []) as unknown as Array<{ pnms: { id: string; name: string; email: string } | null }>)
       .flatMap((e) => (e.pnms ? [e.pnms] : []));
@@ -69,6 +73,7 @@ export async function GET(_request: Request, { params }: Params) {
       attendance: rows.map((r) => ({
         id: r.id,
         method: r.method,
+        status: r.status,
         checkedInAt: r.checked_in_at,
         slotId: r.slot_id,
         pnm: {
@@ -78,6 +83,15 @@ export async function GET(_request: Request, { params }: Params) {
           photoUrl: r.pnms!.photo_path ? urls.get(r.pnms!.photo_path) ?? null : null,
         },
       })),
+      actives: all
+        .filter((r) => r.users)
+        .map((r) => ({
+          id: r.id,
+          method: r.method,
+          status: r.status,
+          checkedInAt: r.checked_in_at,
+          user: { id: r.users!.id, name: r.users!.name, avatar: r.users!.avatar || null },
+        })),
       unmatched: ((unmatchedRes.data ?? []) as Array<{ id: string; name: string; email: string; submitted_at: string }>).map(
         (u) => ({
           id: u.id,
@@ -120,8 +134,8 @@ export async function POST(request: Request, { params }: Params) {
     const pnmId = pnm.id;
 
     const { error } = await supabaseAdmin.from("rush_event_attendance").upsert(
-      { event_id: event.id, pnm_id: pnmId, method: "manual", checked_in_by: context.appUser.id },
-      { onConflict: "event_id,pnm_id", ignoreDuplicates: true },
+      { event_id: event.id, pnm_id: pnmId, status: "present", method: "manual", checked_in_by: context.appUser.id },
+      { onConflict: "event_id,pnm_id" },
     );
     if (error) throw error;
     return NextResponse.json({ ok: true });

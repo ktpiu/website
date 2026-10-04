@@ -15,6 +15,7 @@ import {
   str,
 } from "@/lib/rush/server";
 import { getOptionalPnm } from "@/lib/rush/pnm-auth";
+import { requireAppAuthContext } from "@/lib/server-auth";
 import { notifyCheckIn } from "@/lib/rush/notify";
 import { looksLikeEmail } from "@/lib/rush/types";
 
@@ -32,12 +33,23 @@ type EventRow = {
   visibility: "public" | "pnm_portal";
   checkin_open: boolean;
   has_timeslots: boolean;
+  attendance_enabled: boolean;
+  qr_checkin_enabled: boolean;
 };
+
+/** The signed-in active member, or null (signed out, PNM, or not approved). */
+async function getOptionalMember() {
+  try {
+    return (await requireAppAuthContext()).appUser;
+  } catch {
+    return null;
+  }
+}
 
 async function loadEvent(token: string) {
   const { data, error } = await supabaseAdmin
     .from("rush_events")
-    .select("id, cycle_id, title, starts_at, ends_at, location_name, visibility, checkin_open, has_timeslots")
+    .select("id, cycle_id, title, starts_at, ends_at, location_name, visibility, checkin_open, has_timeslots, attendance_enabled, qr_checkin_enabled")
     .eq("checkin_token", token)
     .maybeSingle();
   if (error) throw error;
@@ -50,14 +62,15 @@ export async function GET(_request: Request, { params }: Params) {
   try {
     const { token } = await params;
     const event = await loadEvent(token);
-    const pnm = await getOptionalPnm();
+    const [pnm, member] = await Promise.all([getOptionalPnm(), getOptionalMember()]);
     return NextResponse.json({
+      member: member ? { name: member.name } : null,
       event: {
         title: event.title,
         startsAt: event.starts_at,
         endsAt: event.ends_at,
         locationName: event.location_name,
-        checkinOpen: event.checkin_open,
+        checkinOpen: event.checkin_open && event.attendance_enabled && event.qr_checkin_enabled,
       },
       prefill: pnm ? { name: pnm.name, email: pnm.email } : null,
     });
@@ -82,6 +95,24 @@ export async function POST(request: Request, { params }: Params) {
     // Honeypot: bots fill every field. Pretend it worked.
     if (str(body.website)) return NextResponse.json({ ok: true });
 
+    const event = await loadEvent(token);
+    if (!event.checkin_open || !event.attendance_enabled || !event.qr_checkin_enabled) {
+      throw new RushError(403, "Check-in for this event is closed.");
+    }
+
+    // Signed-in actives check themselves in with their account.
+    const member = await getOptionalMember();
+    if (member) {
+      const { error } = await supabaseAdmin
+        .from("rush_event_attendance")
+        .upsert(
+          { event_id: event.id, user_id: member.id, method: "self", status: "present" },
+          { onConflict: "event_id,user_id", ignoreDuplicates: true },
+        );
+      if (error) throw error;
+      return NextResponse.json({ ok: true });
+    }
+
     const name = str(body.name, 120);
     const email = normalizeEmail(str(body.email, 254));
     if (!name) throw new RushError(400, "Enter your name.");
@@ -89,9 +120,6 @@ export async function POST(request: Request, { params }: Params) {
 
     rateLimit(`checkin:${clientIp(request)}`, 20, 60_000);
     rateLimit(`checkin:${email}`, 5, 60_000);
-
-    const event = await loadEvent(token);
-    if (!event.checkin_open) throw new RushError(403, "Check-in for this event is closed.");
 
     if (event.visibility === "public") {
       const { pnm } = await findOrCreatePnm({ email, name });

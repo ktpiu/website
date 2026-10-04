@@ -4,8 +4,45 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/rush/native-select";
+import { PeopleSelector } from "@/components/ui/people-selector";
+import { usePeopleOptions } from "@/components/rush/forms/use-people-options";
 import { cn } from "@/lib/utils";
 import { formatAnswer, type RushAnswers, type RushFormField } from "@/lib/rush/types";
+
+function PeopleQuestion({
+  field,
+  value,
+  onChange,
+  cycleId,
+  publicMode,
+  disabled,
+  invalid,
+  id,
+}: {
+  field: RushFormField;
+  value: string[];
+  onChange: (value: string[]) => void;
+  cycleId?: string | null;
+  publicMode?: boolean;
+  disabled?: boolean;
+  invalid: boolean;
+  id: string;
+}) {
+  const config = field.people ?? { source: "pnms" as const, multiple: true };
+  const { people, loading } = usePeopleOptions(config.source, cycleId, publicMode);
+  return (
+    <PeopleSelector
+      id={id}
+      options={people}
+      value={value}
+      onChange={onChange}
+      multiple={config.multiple}
+      loading={loading}
+      disabled={disabled}
+      invalid={invalid}
+    />
+  );
+}
 
 /** Renders a form template's questions as controlled inputs. */
 export function FormRenderer({
@@ -14,12 +51,18 @@ export function FormRenderer({
   onChange,
   errors,
   disabled,
+  cycleId,
+  publicMode,
 }: {
   fields: RushFormField[];
   values: RushAnswers;
   onChange: (values: RushAnswers) => void;
   errors?: Record<string, string>;
   disabled?: boolean;
+  /** Cycle whose PNMs the people selector offers. */
+  cycleId?: string | null;
+  /** Public application: people selectors only list active names. */
+  publicMode?: boolean;
 }) {
   const set = (id: string, value: RushAnswers[string] | undefined) => {
     const next = { ...values };
@@ -59,6 +102,18 @@ export function FormRenderer({
                 onChange={(e) => set(field.id, e.target.value)}
                 disabled={disabled}
                 aria-invalid={Boolean(error)}
+              />
+            )}
+            {field.type === "people" && (
+              <PeopleQuestion
+                id={id}
+                field={field}
+                value={Array.isArray(value) ? value : []}
+                onChange={(next) => set(field.id, next.length ? next : undefined)}
+                cycleId={cycleId}
+                publicMode={publicMode}
+                disabled={disabled}
+                invalid={Boolean(error)}
               />
             )}
             {field.type === "select" && (

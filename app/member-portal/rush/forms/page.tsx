@@ -4,19 +4,28 @@ import { useMemo, useState } from "react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ArrowLeft, Loader2, Pencil, Search, Trash2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/lib/auth-store";
-import { canManageRush } from "@/lib/permissions";
+import { canManageRush, canManageRushForms } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { PeopleSelector } from "@/components/ui/people-selector";
+import { Switch } from "@/components/ui/switch";
+import { NativeSelect } from "@/components/rush/native-select";
+import { usePeopleOptions } from "@/components/rush/forms/use-people-options";
+import type { EventsResponse } from "@/components/member-portal/rush/types";
+import { conflictField } from "@/lib/rush/conflicts";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PnmAvatar } from "@/components/rush/pnm-avatar";
 import { FormRenderer } from "@/components/rush/forms/form-renderer";
 import { CycleSelect, NoCycle, RushPageHeader, useSelectedCycle } from "@/components/member-portal/rush/shared";
 import { ApiError, errorMessage, formatDateTime, rushFetch } from "@/lib/rush/client";
-import { validateAnswers, type RushAnswers, type RushFormTemplate } from "@/lib/rush/types";
+import { personKey, validateAnswers, type RushAnswers, type RushFormTemplate } from "@/lib/rush/types";
 
 type DirectoryPnm = { id: string; name: string; photoUrl: string | null };
 type MyResponse = {
@@ -26,13 +35,57 @@ type MyResponse = {
   cycleId: string;
   pnmId: string;
   pnmName: string;
+  eventId: string | null;
+  eventTitle: string | null;
+  participants: Array<{ userId: string; role: string }>;
   answers: RushAnswers;
   createdAt: string;
   updatedAt: string;
 };
 
+/** Who was in the room, per role: a people selector for each participant role. */
+function ParticipantsPicker({
+  template,
+  value,
+  onChange,
+}: {
+  template: RushFormTemplate;
+  value: Record<string, string[]>;
+  onChange: (value: Record<string, string[]>) => void;
+}) {
+  const { people, loading } = usePeopleOptions("actives");
+  return (
+    <div className="space-y-4 rounded-xl border p-3">
+      <p className="text-sm font-medium">Who was in the room?</p>
+      {template.participant_roles.map((role) => (
+        <div key={role.id} className="space-y-1.5">
+          <Label>
+            {role.label}
+            {role.required ? <span className="text-destructive"> *</span> : null}
+          </Label>
+          <PeopleSelector
+            multiple
+            options={people}
+            loading={loading}
+            value={value[role.id] ?? []}
+            onChange={(ids) => onChange({ ...value, [role.id]: ids })}
+            placeholder={`Select ${role.label.toLowerCase()}…`}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function toParticipantMap(list: Array<{ userId: string; role: string }>) {
+  const map: Record<string, string[]> = {};
+  for (const p of list) (map[p.role] ??= []).push(personKey("user", p.userId));
+  return map;
+}
+
 export default function RushFormsPage() {
-  const { permissions } = useAuthStore();
+  const { permissions, user } = useAuthStore();
+  const canToggleForms = canManageRushForms(permissions);
   const { cycle, cycleParam, isPending: cyclesPending } = useSelectedCycle();
   const queryClient = useQueryClient();
 
@@ -45,6 +98,9 @@ export default function RushFormsPage() {
   const [editing, setEditing] = useState<MyResponse | null>(null);
   const [editAnswers, setEditAnswers] = useState<RushAnswers>({});
   const [tab, setTab] = useState("new");
+  const [eventId, setEventId] = useState("");
+  const [participants, setParticipants] = useState<Record<string, string[]>>({});
+  const [editParticipants, setEditParticipants] = useState<Record<string, string[]>>({});
 
   const directory = useQuery({
     queryKey: ["rush", "directory", cycleParam],
@@ -64,35 +120,69 @@ export default function RushFormsPage() {
     queryFn: () => rushFetch<{ responses: MyResponse[] }>(`/api/rush/responses?cycleId=${cycleParam}`).then((r) => r.responses),
   });
 
+  const events = useQuery({
+    queryKey: ["rush", "events", cycleParam],
+    placeholderData: keepPreviousData,
+    queryFn: () => rushFetch<EventsResponse>(`/api/rush/events?cycleId=${cycleParam}`),
+  });
+
+  const setOpen = async (t: RushFormTemplate, isOpen: boolean) => {
+    try {
+      await rushFetch(`/api/rush/templates/${t.id}/open`, { method: "PATCH", json: { isOpen } });
+      toast.success(isOpen ? `${t.name} is open.` : `${t.name} is closed.`);
+      await queryClient.invalidateQueries({ queryKey: ["rush", "templates"] });
+    } catch (error) {
+      toast.error(errorMessage(error));
+    }
+  };
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return (directory.data ?? []).filter((p) => !q || p.name.toLowerCase().includes(q));
   }, [directory.data, search]);
 
   const template = templates.data?.find((t) => t.id === templateId) ?? null;
-  const editTemplate = editing ? templates.data?.find((t) => t.id === editing.templateId) : null;
+  const editTemplate = editing ? templates.data?.find((t) => t.id === editing.templateId && t.is_open) : null;
+
+  const linkedEvents = (events.data?.events ?? []).filter((e) => template && e.formTemplateId === template.id);
+  const isConflictForm = Boolean(template && conflictField(template));
+  const multiple = template?.submission_mode === "multiple";
 
   const reset = () => {
     setTemplateId(null);
     setAnswers({});
     setFieldErrors({});
+    setEventId("");
+    setParticipants({});
   };
 
   const submit = async () => {
-    if (!template || !pnm || !cycle) return;
+    if (!template || (!pnm && !isConflictForm) || !cycle) return;
     const errors = validateAnswers(template.fields, answers);
     setFieldErrors(errors);
     if (Object.keys(errors).length) return;
+    if (linkedEvents.length > 0 && !eventId) {
+      toast.error("Choose the event this is for.");
+      return;
+    }
     setSubmitting(true);
     try {
       await rushFetch("/api/rush/responses", {
         method: "POST",
-        json: { templateId: template.id, pnmId: pnm.id, cycleId: cycle.id, answers },
+        json: {
+          templateId: template.id,
+          pnmId: pnm?.id,
+          cycleId: cycle.id,
+          eventId: eventId || undefined,
+          answers,
+          participants: multiple ? participants : undefined,
+        },
       });
-      toast.success(`${template.name} submitted for ${pnm.name}.`);
+      toast.success(pnm ? `${template.name} submitted for ${pnm.name}.` : `${template.name} submitted.`);
       setAnswers({});
       setFieldErrors({});
       setPnm(null);
+      setParticipants(multiple && user ? { [template.participant_roles[0]?.id ?? ""]: [personKey("user", user.id)] } : {});
       await queryClient.invalidateQueries({ queryKey: ["rush", "responses"] });
     } catch (error) {
       if (error instanceof ApiError && error.fieldErrors) setFieldErrors(error.fieldErrors);
@@ -106,7 +196,7 @@ export default function RushFormsPage() {
     if (!editing) return;
     setSubmitting(true);
     try {
-      await rushFetch(`/api/rush/responses/${editing.id}`, { method: "PATCH", json: { answers: editAnswers } });
+      await rushFetch(`/api/rush/responses/${editing.id}`, { method: "PATCH", json: { answers: editAnswers, participants: editParticipants } });
       toast.success("Submission updated.");
       setEditing(null);
       await queryClient.invalidateQueries({ queryKey: ["rush", "responses"] });
@@ -156,23 +246,47 @@ export default function RushFormsPage() {
                 ) : (
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                     {(templates.data ?? []).map((t) => (
-                      <button
+                      <div
                         key={t.id}
-                        type="button"
-                        onClick={() => {
-                          setTemplateId(t.id);
-                          setAnswers({});
-                          setFieldErrors({});
-                        }}
-                        className="flex flex-col gap-1.5 rounded-xl border bg-card p-4 text-left transition-colors hover:border-primary hover:bg-muted/40"
+                        className={cn(
+                          "flex flex-col rounded-xl border bg-card transition-colors",
+                          t.is_open ? "hover:border-primary hover:bg-muted/40" : "opacity-70",
+                        )}
                       >
-                        <span className="font-semibold">{t.name}</span>
-                        {t.description ? <span className="text-sm text-muted-foreground">{t.description}</span> : null}
-                        <span className="mt-auto pt-1 text-xs text-muted-foreground">
-                          {t.fields.length} question{t.fields.length === 1 ? "" : "s"}
-                          {t.hide_author_in_deliberation ? " · anonymous in deliberation" : ""}
-                        </span>
-                      </button>
+                        <button
+                          type="button"
+                          disabled={!t.is_open}
+                          onClick={() => {
+                            setTemplateId(t.id);
+                            setAnswers({});
+                            setFieldErrors({});
+                            setEventId("");
+                            setParticipants(
+                              t.submission_mode === "multiple" && user && t.participant_roles[0]
+                                ? { [t.participant_roles[0].id]: [personKey("user", user.id)] }
+                                : {},
+                            );
+                          }}
+                          className="flex flex-1 flex-col gap-1.5 p-4 text-left disabled:cursor-not-allowed"
+                        >
+                          <span className="flex flex-wrap items-center gap-1.5 font-semibold">
+                            {t.name}
+                            {!t.is_open ? <Badge variant="outline">Closed</Badge> : null}
+                            {t.hide_author_in_deliberation ? <Badge variant="secondary">Anonymous</Badge> : null}
+                          </span>
+                          {t.description ? <span className="text-sm text-muted-foreground">{t.description}</span> : null}
+                          <span className="mt-auto pt-1 text-xs text-muted-foreground">
+                            {t.fields.length} question{t.fields.length === 1 ? "" : "s"}
+                            {t.submission_mode === "multiple" ? " · shared by everyone in the room" : ""}
+                          </span>
+                        </button>
+                        {canToggleForms ? (
+                          <label className="flex items-center justify-between border-t px-4 py-2 text-xs text-muted-foreground">
+                            {t.is_open ? "Open to submissions" : "Closed to submissions"}
+                            <Switch checked={t.is_open} onCheckedChange={(v) => setOpen(t, v)} />
+                          </label>
+                        ) : null}
+                      </div>
                     ))}
                   </div>
                 )}
@@ -197,7 +311,7 @@ export default function RushFormsPage() {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-6">
-                  {pnm ? (
+                  {isConflictForm ? null : pnm ? (
                     <div className="flex items-center gap-3 rounded-xl border bg-muted/40 p-3">
                       <PnmAvatar name={pnm.name} src={pnm.photoUrl} className="h-12 w-12" />
                       <div className="min-w-0 flex-1">
@@ -246,15 +360,47 @@ export default function RushFormsPage() {
                     </div>
                   )}
 
-                  <FormRenderer fields={template.fields} values={answers} onChange={setAnswers} errors={fieldErrors} />
-                  <p className="text-xs text-muted-foreground">
-                    {template.hide_author_in_deliberation
-                      ? "Your name is visible to the rush committee but hidden during deliberation."
-                      : "Your name is visible to the rush committee and during deliberation."}
+                  {linkedEvents.length > 0 ? (
+                    <div className="space-y-2">
+                      <Label htmlFor="form-event">
+                        Which event is this for? <span className="text-destructive">*</span>
+                      </Label>
+                      <NativeSelect id="form-event" value={eventId} onChange={(e) => setEventId(e.target.value)}>
+                        <option value="">Choose…</option>
+                        {linkedEvents.map((e) => (
+                          <option key={e.id} value={e.id}>
+                            {e.title} · {formatDateTime(e.startsAt)}
+                          </option>
+                        ))}
+                      </NativeSelect>
+                    </div>
+                  ) : null}
+                  {multiple ? <ParticipantsPicker template={template} value={participants} onChange={setParticipants} /> : null}
+
+                  <FormRenderer
+                    fields={template.fields}
+                    values={answers}
+                    onChange={setAnswers}
+                    errors={fieldErrors}
+                    cycleId={cycle.id}
+                  />
+                  <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                    {template.hide_author_in_deliberation ? (
+                      <>
+                        <Badge variant="secondary">Anonymous</Badge> Your name is visible to the rush committee but hidden
+                        during deliberation.
+                      </>
+                    ) : (
+                      "Your name is visible to the rush committee and during deliberation."
+                    )}
                   </p>
-                  <Button onClick={submit} disabled={submitting || !pnm}>
+                  <Button onClick={submit} disabled={submitting || (!pnm && !isConflictForm)}>
                     {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                    {pnm ? `Submit for ${pnm.name.split(" ")[0]}` : "Choose a PNM to submit"}
+                    {isConflictForm
+                      ? "Submit"
+                      : pnm
+                        ? `Submit for ${pnm.name.split(" ")[0]}`
+                        : "Choose a PNM to submit"}
                   </Button>
                 </CardContent>
               </Card>
@@ -275,6 +421,7 @@ export default function RushFormsPage() {
                     <div>
                       <p className="font-medium">
                         {r.templateName} · {r.pnmName}
+                        {r.eventTitle ? <span className="font-normal text-muted-foreground"> · {r.eventTitle}</span> : null}
                       </p>
                       <p className="text-xs text-muted-foreground">
                         Submitted {formatDateTime(r.createdAt)}
@@ -288,6 +435,7 @@ export default function RushFormsPage() {
                         onClick={() => {
                           setEditing(r);
                           setEditAnswers(r.answers);
+                          setEditParticipants(toParticipantMap(r.participants));
                         }}
                       >
                         <Pencil className="mr-1 h-4 w-4" /> Edit
@@ -313,9 +461,14 @@ export default function RushFormsPage() {
             </DialogTitle>
           </DialogHeader>
           {editTemplate ? (
-            <FormRenderer fields={editTemplate.fields} values={editAnswers} onChange={setEditAnswers} />
+            <>
+              {editTemplate.submission_mode === "multiple" ? (
+                <ParticipantsPicker template={editTemplate} value={editParticipants} onChange={setEditParticipants} />
+              ) : null}
+              <FormRenderer fields={editTemplate.fields} values={editAnswers} onChange={setEditAnswers} cycleId={cycle?.id} />
+            </>
           ) : (
-            <p className="text-sm text-muted-foreground">This form is no longer active and can&apos;t be edited.</p>
+            <p className="text-sm text-muted-foreground">This form is closed and can&apos;t be edited.</p>
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditing(null)}>

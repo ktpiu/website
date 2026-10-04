@@ -11,6 +11,7 @@ import { IuEmailWarning } from "@/components/rush/iu-email-warning";
 import { errorMessage, formatRange, rushFetch } from "@/lib/rush/client";
 
 type EventInfo = {
+  member: { name: string } | null;
   event: { title: string; startsAt: string; endsAt: string | null; locationName: string; checkinOpen: boolean };
   prefill: { name: string; email: string } | null;
 };
@@ -103,11 +104,16 @@ export default function CheckInPage({ params }: { params: Promise<{ token: strin
                 </p>
               ) : (
                 <form onSubmit={submit} className="space-y-4">
-                  <div className="space-y-2">
+                  {info.member ? (
+                    <p className="rounded-md bg-muted p-3 text-sm">
+                      Checking in as <span className="font-medium">{info.member.name}</span> (active member).
+                    </p>
+                  ) : null}
+                  <div className={info.member ? "hidden" : "space-y-2"}>
                     <Label htmlFor="name">Full name</Label>
-                    <Input id="name" autoComplete="name" required value={name} onChange={(e) => setName(e.target.value)} />
+                    <Input id="name" autoComplete="name" required={!info.member} value={name} onChange={(e) => setName(e.target.value)} />
                   </div>
-                  <div className="space-y-2">
+                  <div className={info.member ? "hidden" : "space-y-2"}>
                     <Label htmlFor="email">IU email</Label>
                     <Input
                       id="email"
@@ -115,7 +121,7 @@ export default function CheckInPage({ params }: { params: Promise<{ token: strin
                       autoComplete="email"
                       inputMode="email"
                       placeholder="you@iu.edu"
-                      required
+                      required={!info.member}
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                     />
@@ -137,7 +143,7 @@ export default function CheckInPage({ params }: { params: Promise<{ token: strin
                     {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                     Check in
                   </Button>
-                  <p className="text-center text-xs text-muted-foreground">
+                  <p className={info.member ? "hidden" : "text-center text-xs text-muted-foreground"}>
                     We&apos;ll email you a confirmation and a link to set up your rush account.
                   </p>
                 </form>

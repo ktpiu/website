@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireAppAuthContext } from "@/lib/server-auth";
 import { canManageRush } from "@/lib/permissions";
-import { validateResponse } from "@/lib/rush/responses";
+import { validateParticipants, validateResponse } from "@/lib/rush/responses";
 import { readJson, RushError, rushErrorResponse } from "@/lib/rush/server";
 
 export const dynamic = "force-dynamic";
@@ -29,10 +29,15 @@ export async function PATCH(request: Request, { params }: Params) {
     const context = await requireAppAuthContext();
     const { responseId } = await params;
     const row = await loadOwnResponse(responseId, context.appUser.id, false);
-    const { answers } = await validateResponse(row.template_id, (await readJson(request)).answers);
+    const body = await readJson(request);
+    const { template, answers } = await validateResponse(row.template_id, body.answers);
+    const participants =
+      template.submission_mode === "multiple"
+        ? await validateParticipants(template, body.participants, context.appUser.id)
+        : [];
     const { error } = await supabaseAdmin
       .from("rush_form_responses")
-      .update({ answers, updated_at: new Date().toISOString() })
+      .update({ answers, participants, updated_at: new Date().toISOString() })
       .eq("id", row.id);
     if (error) throw error;
     return NextResponse.json({ ok: true });

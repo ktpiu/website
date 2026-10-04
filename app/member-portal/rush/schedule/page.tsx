@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PnmAvatar } from "@/components/rush/pnm-avatar";
+import { AttendanceMark } from "@/components/rush/attendance-mark";
 import { SlotGrid } from "@/components/rush/slot-grid";
 import { CycleSelect, NoCycle, RushPageHeader, useSelectedCycle } from "@/components/member-portal/rush/shared";
 import type { EventsResponse, MemberSlot } from "@/components/member-portal/rush/types";
@@ -23,8 +24,14 @@ function SlotCell({
   onSignUp,
   onLeave,
   busy,
+  canMarkPnms,
+  attendanceEnabled,
+  onMark,
 }: {
   slot: MemberSlot;
+  canMarkPnms: boolean;
+  attendanceEnabled: boolean;
+  onMark: (pnmId: string, status: "present" | "late" | "no_show" | null) => void;
   onSignUp: () => void;
   onLeave: (signupId: string) => void;
   busy: boolean;
@@ -33,7 +40,7 @@ function SlotCell({
   const activeFull = slot.actives.length >= slot.activeCapacity;
   const started = new Date(slot.startsAt).getTime() <= Date.now();
 
-  const people = (title: string, count: number, capacity: number, list: Array<{ signupId: string; name: string; photo: string | null; isMe?: boolean }>) => (
+  const people = (title: string, count: number, capacity: number, list: Array<{ signupId: string; name: string; photo: string | null; isMe?: boolean; pnmId?: string; attendance?: "present" | "late" | "no_show" | null }>) => (
     <div>
       <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
         {title} {count}/{capacity}
@@ -45,7 +52,15 @@ function SlotCell({
           {list.map((p) => (
             <li key={p.signupId} className="flex items-center gap-1.5 text-xs">
               <PnmAvatar name={p.name} src={p.photo} className="h-5 w-5" />
-              <span className={cn("truncate", p.isMe && "font-semibold")}>{p.isMe ? "You" : p.name}</span>
+              <span className={cn("flex-1 truncate", p.isMe && "font-semibold")}>{p.isMe ? "You" : p.name}</span>
+              {canMarkPnms && p.pnmId ? (
+                <AttendanceMark
+                  value={p.attendance ?? null}
+                  onlyNoShow={!attendanceEnabled}
+                  disabled={busy}
+                  onChange={(status) => onMark(p.pnmId!, status)}
+                />
+              ) : null}
             </li>
           ))}
         </ul>
@@ -60,7 +75,7 @@ function SlotCell({
         "PNMs",
         slot.pnms.length,
         slot.pnmCapacity,
-        slot.pnms.map((p) => ({ signupId: p.signupId, name: p.name, photo: p.photoUrl })),
+        slot.pnms.map((p) => ({ signupId: p.signupId, name: p.name, photo: p.photoUrl, pnmId: p.pnmId, attendance: p.attendance })),
       )}
       {people(
         "Actives",
@@ -229,6 +244,13 @@ export default function RushSchedulePage() {
                           <SlotCell
                             slot={slot}
                             busy={signUp.isPending || leave.isPending}
+                            canMarkPnms={event.canMarkPnms}
+                            attendanceEnabled={event.attendanceEnabled}
+                            onMark={(pnmId, status) =>
+                              rushFetch(`/api/rush/events/${event.id}/mark`, { method: "POST", json: { pnmId, status } })
+                                .then(refresh)
+                                .catch((error) => toast.error(errorMessage(error)))
+                            }
                             onSignUp={() => signUp.mutate({ slotId: slot.id, eventId: event.id })}
                             onLeave={(signupId) => leave.mutate({ signupId, slotId: slot.id, eventId: event.id })}
                           />

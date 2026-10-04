@@ -30,7 +30,20 @@ export async function GET() {
   try {
     const open = await loadOpenApplication();
     const pnm = await getOptionalPnm();
+    let draft: { name: string; answers: unknown; updatedAt: string } | null = null;
+    if (open && pnm) {
+      const { data, error } = await supabaseAdmin
+        .from("rush_application_drafts")
+        .select("name, answers, updated_at")
+        .eq("cycle_id", open.cycle.id)
+        .eq("pnm_id", pnm.id)
+        .maybeSingle();
+      if (error) throw error;
+      const row = data as { name: string; answers: unknown; updated_at: string } | null;
+      if (row) draft = { name: row.name, answers: row.answers, updatedAt: row.updated_at };
+    }
     return NextResponse.json({
+      draft,
       open: Boolean(open),
       cycleLabel: open?.cycle.label ?? null,
       template: open ? { name: open.template.name, description: open.template.description, fields: open.template.fields } : null,
@@ -107,6 +120,9 @@ export async function POST(request: Request) {
       { onConflict: "cycle_id,pnm_id" },
     );
     if (error) throw error;
+
+    // The submitted application replaces any saved draft.
+    await supabaseAdmin.from("rush_application_drafts").delete().eq("cycle_id", cycle.id).eq("pnm_id", pnm.id);
 
     notifyApplicationReceived(pnm, cycle.label, request);
     return NextResponse.json({ ok: true, hasAccount: Boolean(pnm.clerk_user_id) });

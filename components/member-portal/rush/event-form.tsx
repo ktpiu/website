@@ -1,13 +1,15 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { NativeSelect } from "@/components/rush/native-select";
-import { fromLocalInput, toLocalInput } from "@/lib/rush/client";
+import { fromLocalInput, rushFetch, toLocalInput } from "@/lib/rush/client";
 import type { MemberEvent } from "@/components/member-portal/rush/types";
 import { cn } from "@/lib/utils";
+import type { RushFormTemplate } from "@/lib/rush/types";
 
 export type EventFormValues = {
   title: string;
@@ -23,6 +25,9 @@ export type EventFormValues = {
   selfChangeMode: "cutoff" | "admin_only";
   changeCutoffMinutes: string;
   slotGrid: "time_rows" | "location_rows";
+  formTemplateId: string;
+  attendanceEnabled: boolean;
+  qrCheckinEnabled: boolean;
 };
 
 export function emptyEventForm(kind: "open" | "closed" = "open"): EventFormValues {
@@ -40,6 +45,9 @@ export function emptyEventForm(kind: "open" | "closed" = "open"): EventFormValue
     selfChangeMode: "cutoff",
     changeCutoffMinutes: "0",
     slotGrid: "time_rows",
+    formTemplateId: "",
+    attendanceEnabled: true,
+    qrCheckinEnabled: true,
   };
 }
 
@@ -58,6 +66,9 @@ export function eventToForm(event: MemberEvent): EventFormValues {
     selfChangeMode: event.selfChangeMode,
     changeCutoffMinutes: String(event.changeCutoffMinutes),
     slotGrid: event.slotGrid,
+    formTemplateId: event.formTemplateId ?? "",
+    attendanceEnabled: event.attendanceEnabled,
+    qrCheckinEnabled: event.qrCheckinEnabled,
   };
 }
 
@@ -77,6 +88,11 @@ export function EventForm({
   values: EventFormValues;
   onChange: (values: EventFormValues) => void;
 }) {
+  const templates = useQuery({
+    queryKey: ["rush", "templates", "all"],
+    queryFn: () => rushFetch<{ templates: RushFormTemplate[] }>("/api/rush/templates").then((r) => r.templates),
+  });
+  const evaluationTemplates = (templates.data ?? []).filter((t) => t.kind === "evaluation" && t.is_active);
   const set = <K extends keyof EventFormValues>(key: K, value: EventFormValues[K]) => onChange({ ...values, [key]: value });
 
   return (
@@ -117,6 +133,43 @@ export function EventForm({
       <div className="space-y-2">
         <Label htmlFor="ev-desc">Description</Label>
         <Textarea id="ev-desc" rows={3} value={values.description} onChange={(e) => set("description", e.target.value)} />
+      </div>
+
+      <div className="space-y-4 rounded-lg border p-4">
+        <div className="space-y-2">
+          <Label htmlFor="ev-form">Evaluation form</Label>
+          <NativeSelect id="ev-form" value={values.formTemplateId} onChange={(e) => set("formTemplateId", e.target.value)}>
+            <option value="">None</option>
+            {evaluationTemplates.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </NativeSelect>
+          <p className="text-xs text-muted-foreground">
+            Actives submit this form for a PNM and pick this event, so deliberation can group and average scores by event.
+          </p>
+        </div>
+        <label className="flex items-center justify-between gap-4">
+          <span>
+            <span className="block text-sm font-medium">Take attendance</span>
+            <span className="block text-xs text-muted-foreground">
+              When off, attendance isn&apos;t tracked, but no-shows can still be flagged.
+            </span>
+          </span>
+          <Switch checked={values.attendanceEnabled} onCheckedChange={(v) => set("attendanceEnabled", v)} />
+        </label>
+        {values.attendanceEnabled ? (
+          <label className="flex items-center justify-between gap-4">
+            <span>
+              <span className="block text-sm font-medium">QR check-in</span>
+              <span className="block text-xs text-muted-foreground">
+                When off, actives signed up for the event mark each PNM present, late or no-show from the event page.
+              </span>
+            </span>
+            <Switch checked={values.qrCheckinEnabled} onCheckedChange={(v) => set("qrCheckinEnabled", v)} />
+          </label>
+        ) : null}
       </div>
 
       <div className="space-y-4 rounded-lg border p-4">

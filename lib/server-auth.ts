@@ -4,7 +4,9 @@ import {
   ADMIN_FINANCE_VIEW,
   ADMIN_USERS_EDIT,
   ADMIN_VIEW,
+  RUSH_ATTENDANCE_VIEW_ACTIVES,
   RUSH_DELIBERATION_MANAGE,
+  RUSH_FORMS_MANAGE,
   RUSH_MANAGE,
   RUSH_VIEW,
   fetchUserPermissionKeys,
@@ -258,5 +260,17 @@ export function assertRushManagePermission(context: AppAuthContext) {
 export function assertDeliberationManagePermission(context: AppAuthContext) {
   if (!context.permissions.has(RUSH_DELIBERATION_MANAGE)) {
     throw new RouteAuthError(403, "Missing deliberation admin permission.");
+  }
+}
+
+export function assertRushFormsManagePermission(context: AppAuthContext) {
+  if (!context.permissions.has(RUSH_FORMS_MANAGE) && !context.permissions.has(RUSH_MANAGE)) {
+    throw new RouteAuthError(403, "Missing rush forms permission.");
+  }
+}
+
+export function assertActiveAttendancePermission(context: AppAuthContext) {
+  if (!context.permissions.has(RUSH_ATTENDANCE_VIEW_ACTIVES) && !context.permissions.has(RUSH_MANAGE)) {
+    throw new RouteAuthError(403, "Missing active attendance permission.");
   }
 }

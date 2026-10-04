@@ -5,7 +5,7 @@ import { supabaseAdmin } from "@/lib/supabase-admin";
 import { RouteAuthError } from "@/lib/server-auth";
 import { normalizeEmail } from "@/lib/app-user";
 import { AVATAR_ALLOWED_TYPES, validateAvatarFile } from "@/lib/avatar-upload";
-import { parseFields, type RushCycle, type RushFormTemplate } from "@/lib/rush/types";
+import { parseFields, parseParticipantRoles, type RushCycle, type RushFormTemplate } from "@/lib/rush/types";
 
 export const RUSH_BUCKET = process.env.SUPABASE_RUSH_BUCKET ?? "rush";
 const SIGNED_URL_SECONDS = 60 * 60;
@@ -115,7 +115,11 @@ export async function resolveCycleId(request: Request): Promise<string | null> {
 }
 
 export function toTemplate(row: Record<string, unknown>): RushFormTemplate {
-  return { ...(row as unknown as RushFormTemplate), fields: parseFields(row.fields) };
+  return {
+    ...(row as unknown as RushFormTemplate),
+    fields: parseFields(row.fields),
+    participant_roles: parseParticipantRoles(row.participant_roles),
+  };
 }
 
 export async function getApplicationTemplate(cycle: RushCycle) {
