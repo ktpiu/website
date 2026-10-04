@@ -64,3 +64,17 @@ export function RushEventCard({ event, children, badge }: { event: RushEventCard
 export function ClosedBadge() {
   return <Badge variant="secondary">Closed rush</Badge>;
 }
+
+/** Concluded / countdown / green "In Progress" indicator for an event. */
+export function EventStatusBadge({ startsAt, endsAt, now = Date.now() }: { startsAt: string; endsAt?: string | null; now?: number }) {
+  const start = new Date(startsAt).getTime();
+  const end = new Date(endsAt ?? startsAt).getTime();
+  if (now >= start && now <= end) {
+    return <Badge className="bg-green-600 text-white hover:bg-green-600">In Progress</Badge>;
+  }
+  if (now > end) return <Badge variant="secondary">Concluded</Badge>;
+  const hours = Math.ceil((start - now) / (60 * 60 * 1000));
+  const label =
+    hours < 24 ? `In ${hours} ${hours === 1 ? "hour" : "hours"}` : `In ${Math.floor(hours / 24)} ${Math.floor(hours / 24) === 1 ? "day" : "days"}`;
+  return <Badge variant="outline" className="bg-background/95">{label}</Badge>;
+}

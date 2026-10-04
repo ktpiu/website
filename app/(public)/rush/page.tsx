@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { PnmAvatar } from "@/components/rush/pnm-avatar";
 import {
   RushEventCard,
+  EventStatusBadge,
   type RushEventCardData,
 } from "@/components/rush/rush-event-card";
 import { FAQSection } from "@/components/sections/faq-section";
@@ -68,11 +69,8 @@ export default function RushPage() {
   const inOpenRush = data?.cycle?.phase === "open";
   const openRushActive = inOpenRush && Boolean(data?.cycle?.applicationsOpen);
 
-  const upcoming = (data?.events ?? []).filter(
-    (e) =>
-      new Date(e.endsAt ?? e.startsAt).getTime() >
-      Date.now() - 6 * 60 * 60 * 1000,
-  );
+  const now = Date.now();
+  const events = data?.events ?? [];
 
   return (
     <main>
@@ -161,7 +159,7 @@ export default function RushPage() {
                 <Skeleton key={i} className="h-72 rounded-xl" />
               ))}
             </div>
-          ) : upcoming.length === 0 ? (
+          ) : events.length === 0 ? (
             <p className="rounded-xl border border-dashed p-8 text-center text-muted-foreground">
               {failed
                 ? "We couldn't load events right now."
@@ -169,8 +167,12 @@ export default function RushPage() {
             </p>
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {upcoming.map((event) => (
-                <RushEventCard key={event.id} event={event} />
+              {events.map((event) => (
+                <RushEventCard
+                  key={event.id}
+                  event={event}
+                  badge={<EventStatusBadge startsAt={event.startsAt} endsAt={event.endsAt} now={now} />}
+                />
               ))}
             </div>
           )}
