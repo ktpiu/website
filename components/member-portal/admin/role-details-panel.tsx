@@ -114,6 +114,27 @@ export function RoleDetailsPanel({
             </p>
           </div>
 
+          {selectedRole.type === "pledge_class" ? (
+            <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
+              <div>
+                <p className="text-sm font-medium">Initiated</p>
+                <p className="text-xs text-muted-foreground">
+                  Turning this on (and saving) moves every pledge in this class
+                  to active, which gives them the member portal and public
+                  listing. Individuals can still be moved by hand in User
+                  Management. Turning it off changes no one&apos;s status.
+                </p>
+              </div>
+              <Switch
+                disabled={readOnly}
+                checked={selectedRole.is_initiated}
+                onCheckedChange={(checked) =>
+                  onUpdateRole({ is_initiated: checked })
+                }
+              />
+            </div>
+          ) : null}
+
           <div className="flex items-center justify-between rounded-md border px-3 py-2">
             <div>
               <p className="text-sm font-medium">Hidden Role</p>

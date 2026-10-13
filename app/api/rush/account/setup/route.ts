@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { clerkClient } from "@clerk/nextjs/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
-import { findAppUserByEmail } from "@/lib/app-user";
+import { findAppUserByEmail, resolveAppUser } from "@/lib/app-user";
+import { hasPortalAccess } from "@/lib/account-status";
 import { verifySetupToken } from "@/lib/rush/links";
-import { getPnm, readJson, RushError, rushErrorResponse, str } from "@/lib/rush/server";
+import { getPnm, readJson, RushError, rushErrorResponse, str, writeAccountStatus } from "@/lib/rush/server";
 
 export const dynamic = "force-dynamic";
 
@@ -29,9 +30,9 @@ function clerkErrorMessage(error: unknown) {
 }
 
 /**
- * Creates the PNM's Clerk account with the chosen password (tagged
- * accountType "pnm" so it never shows up as a pending member) and returns a
- * one-time sign-in ticket. The emailed link proves ownership of the address.
+ * Creates the PNM's Clerk account with the chosen password, links it to their
+ * rushee account, and returns a one-time sign-in ticket. The emailed link
+ * proves ownership of the address.
  */
 export async function POST(request: Request) {
   try {
@@ -45,14 +46,12 @@ export async function POST(request: Request) {
 
     if (!clerkUserId) {
       const [firstName, ...rest] = pnm.name.split(/\s+/);
-      const metadata = { accountType: "pnm", pnmId: pnm.id };
       try {
         const created = await client.users.createUser({
           emailAddress: [pnm.email],
           password,
           firstName,
           lastName: rest.join(" ") || undefined,
-          publicMetadata: metadata,
         });
         clerkUserId = created.id;
       } catch (error) {
@@ -61,8 +60,9 @@ export async function POST(request: Request) {
           throw new RushError(400, message ?? "Could not create your account.");
         }
         // They already signed up through the normal sign-up page. Adopt that
-        // account unless it belongs to a member profile.
-        if (await findAppUserByEmail(pnm.email)) {
+        // account unless it belongs to a member.
+        const existingAccount = await findAppUserByEmail(pnm.email);
+        if (existingAccount && hasPortalAccess(existingAccount.account_status)) {
           throw new RushError(409, "This email already belongs to a member account. Sign in instead.");
         }
         const { data: existing } = await client.users.getUserList({ emailAddress: [pnm.email], limit: 1 });
@@ -73,16 +73,19 @@ export async function POST(request: Request) {
         } catch (updateError) {
           throw new RushError(400, clerkErrorMessage(updateError).message ?? "Could not set your password.");
         }
-        await client.users.updateUserMetadata(account.id, { publicMetadata: metadata });
         clerkUserId = account.id;
       }
 
+      // Link (or create) their account row, then the rush record.
+      const { user } = await resolveAppUser({ clerkUserId, email: pnm.email, name: pnm.name });
       const { error } = await supabaseAdmin
         .from("pnms")
-        .update({ clerk_user_id: clerkUserId, updated_at: new Date().toISOString() })
-        .eq("id", pnm.id)
-        .is("clerk_user_id", null);
+        .update({ clerk_user_id: clerkUserId, linked_user_id: user.id, updated_at: new Date().toISOString() })
+        .eq("id", pnm.id);
       if (error) throw error;
+      if (user.account_status === "public") {
+        await writeAccountStatus([user.id], "rushee");
+      }
     } else {
       throw new RushError(409, "Your account is already set up. Sign in instead.", "ALREADY_SETUP");
     }

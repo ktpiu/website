@@ -134,10 +134,12 @@ function parseObligationBalance(row: unknown): FinanceObligationBalance | null {
   };
 }
 
+/** Chapter accounts (pledges and up); public and rushee accounts never owe dues. */
 export async function loadAllBasicUsers() {
   const { data, error } = await supabase
     .from("users")
     .select("id, name, email, role")
+    .not("account_status", "in", "(public,rushee)")
     .order("name", { ascending: true });
 
   if (error) throw error;

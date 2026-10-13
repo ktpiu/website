@@ -1,6 +1,7 @@
 import { supabase } from "@/lib/supabase";
 import type { Role, User } from "@/lib/supabase";
 import { isProfileIncomplete } from "@/lib/profile-completeness";
+import { hasPortalAccess } from "@/lib/account-status";
 
 /**
  * Member classification helpers built on the roles system.
@@ -9,7 +10,7 @@ import { isProfileIncomplete } from "@/lib/profile-completeness";
  *   academic year. The academic year rolls over on June 1, so a member
  *   graduating in 2027 is a Senior from June 2026 through May 2027.
  * - Pledge class comes from a role whose type is "pledge_class".
- * - Alumni are flagged manually via users.is_alumni.
+ * - Alumni are users with account_status "alumni" (users.is_alumni).
  */
 
 const ACADEMIC_YEAR_ROLLOVER_MONTH = 5; // June (0-indexed)
@@ -69,60 +70,62 @@ export function getPledgeClassRole<T extends { type: Role["type"]; priority: num
   return pledgeClasses[0] ?? null;
 }
 
-type UserWithRolesRow = Omit<PublicMember, "roles"> & {
-  user_roles:
-    | Array<{ roles: PublicMemberRole | PublicMemberRole[] | null }>
-    | null;
+type WebsiteMemberRow = Omit<PublicMember, "roles"> & {
+  roles: PublicMemberRole[] | null;
+  on_members_page: boolean;
 };
 
-function flattenRoles(row: UserWithRolesRow): PublicMemberRole[] {
-  const roles: PublicMemberRole[] = [];
-  for (const entry of row.user_roles ?? []) {
-    const joined = entry.roles;
-    if (!joined) continue;
-    const list = Array.isArray(joined) ? joined : [joined];
-    for (const role of list) {
-      if (role && typeof role.id === "string") roles.push(role);
-    }
-  }
-  return roles;
+/**
+ * Whether a member appears on the public members / alumni pages. Mirrors
+ * public.website_members() in the database, which is what anonymous visitors
+ * actually read: active or alumni, not hidden, and
+ * either forced "shown" or holding a pledge class with a complete profile.
+ */
+export function isListedOnWebsite(
+  user: Pick<User, "account_status" | "website_visibility" | "avatar" | "major">,
+  roles: Array<{ type: Role["type"] }>,
+) {
+  if (!hasPortalAccess(user.account_status)) return false;
+  if (user.website_visibility === "hidden") return false;
+  if (user.website_visibility === "shown") return true;
+  // A complete profile includes a pledge-class role.
+  return !isProfileIncomplete(user, roles);
 }
 
 /**
- * Loads every profile that holds a pledge-class role, with its roles attached.
- * Works for anonymous visitors: profiles are publicly readable and the roles
- * tables have no row-level restrictions.
+ * Everyone the public website may show, through public.website_members():
+ * only the columns these pages render, only members who are listed or hold a
+ * board role. Works for anonymous visitors; public.users itself is not
+ * publicly readable.
  */
-export async function fetchPublicMembers(): Promise<PublicMember[]> {
-  const { data, error } = await supabase
-    .from("users")
-    .select(
-      "id, name, avatar, socials, major, graduation_year, is_alumni, user_roles(roles(id, name, type, priority))",
-    )
-    .eq("is_hidden", false)
-    .eq("is_disaffiliated", false)
-    .order("name", { ascending: true });
-
+async function fetchWebsiteMembers(): Promise<WebsiteMemberRow[]> {
+  const { data, error } = await supabase.rpc("website_members");
   if (error) throw error;
+  return (data ?? []) as WebsiteMemberRow[];
+}
 
-  return ((data ?? []) as unknown as UserWithRolesRow[])
-    .map((row) => ({
-      id: row.id,
-      name: row.name,
-      avatar: row.avatar,
-      socials: row.socials,
-      major: row.major,
-      graduation_year: row.graduation_year,
-      is_alumni: row.is_alumni,
-      roles: flattenRoles(row),
-    }))
-    .filter((member) => getPledgeClassRole(member.roles) !== null)
-    .filter((member) => !isProfileIncomplete(member, member.roles));
+function toPublicMember(row: WebsiteMemberRow): PublicMember {
+  return {
+    id: row.id,
+    name: row.name,
+    avatar: row.avatar,
+    socials: row.socials,
+    major: row.major,
+    graduation_year: row.graduation_year,
+    is_alumni: row.is_alumni,
+    roles: row.roles ?? [],
+  };
+}
+
+/** Members on the public members / alumni pages, with their public roles. */
+export async function fetchPublicMembers(): Promise<PublicMember[]> {
+  const rows = await fetchWebsiteMembers();
+  return rows
+    .filter((row) => row.on_members_page)
+    .map((row) => toPublicMember(row));
 }
 
 export type BoardMember = PublicMember & { position: PublicMemberRole };
-
-type BoardMemberRow = UserWithRolesRow & { title: string | null };
 
 /**
  * Loads every member holding at least one role of the given board type.
@@ -133,36 +136,16 @@ type BoardMemberRow = UserWithRolesRow & { title: string | null };
 export async function fetchBoardMembers(
   type: "exec" | "director",
 ): Promise<BoardMember[]> {
-  const { data, error } = await supabase
-    .from("users")
-    .select(
-      "id, name, avatar, socials, major, graduation_year, is_alumni, title, user_roles(roles(id, name, type, priority))",
-    )
-    .eq("is_hidden", false)
-    .eq("is_disaffiliated", false)
-    .order("name", { ascending: true });
-
-  if (error) throw error;
+  const rows = await fetchWebsiteMembers();
 
   const members: BoardMember[] = [];
-  for (const row of (data ?? []) as unknown as BoardMemberRow[]) {
-    const roles = flattenRoles(row);
-    const position = roles
+  for (const row of rows) {
+    const member = toPublicMember(row);
+    const position = member.roles
       .filter((role) => role.type === type)
       .sort((a, b) => b.priority - a.priority)[0];
     if (!position) continue;
-
-    members.push({
-      id: row.id,
-      name: row.name,
-      avatar: row.avatar,
-      socials: row.socials,
-      major: row.major,
-      graduation_year: row.graduation_year,
-      is_alumni: row.is_alumni,
-      roles,
-      position,
-    });
+    members.push({ ...member, position });
   }
 
   return members.sort(

@@ -1,17 +1,18 @@
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import type { User as SupabaseUser } from "@/lib/supabase";
+import type { AccountStatus } from "@/lib/account-status";
 
 /**
- * Server-only. Resolves a verified Clerk identity to a public.users profile.
+ * Server-only. Resolves a verified Clerk identity to its public.users account.
  *
- * Sign-in never creates a profile on its own. A Clerk account is linked to a
- * pre-existing profile that shares its email (the historical "whitelist"
- * flow); otherwise it is *pending* until an administrator approves it from
- * User Management, which calls provisionAppUser(). Denials are recorded in
- * public.user_access_reviews so the member sees a clear "denied" screen.
+ * Every Clerk account has an account row. Sign-in links the Clerk account to
+ * an unlinked row with the same email (a member profile an admin created, or
+ * a rushee created by a check-in or application); otherwise it creates a new
+ * row with account_status "public". What the account can reach is decided by
+ * its status and roles (lib/account-status.ts), not by whether it exists.
  *
- * RLS policies resolve the current user through users.clerk_user_id, so every
- * signed-in member with portal access must be linked here.
+ * RLS resolves the current member through users.clerk_user_id, and only
+ * counts portal statuses (see current_app_user_id()).
  */
 
 export type ClerkIdentity = {
@@ -19,21 +20,6 @@ export type ClerkIdentity = {
   email: string;
   name?: string | null;
 };
-
-export type AccessReview = {
-  clerk_user_id: string;
-  email: string | null;
-  name: string | null;
-  status: "denied";
-  note: string | null;
-  reviewed_by: string | null;
-  reviewed_at: string;
-};
-
-export type ResolveAppUserResult =
-  | { status: "active"; user: SupabaseUser; linked: boolean }
-  | { status: "pending" }
-  | { status: "denied"; review: AccessReview };
 
 const UNIQUE_VIOLATION = "23505";
 
@@ -64,10 +50,12 @@ function buildNewUserPayload({
   clerkUserId,
   email,
   name,
+  status,
 }: {
-  clerkUserId: string;
+  clerkUserId: string | null;
   email: string;
   name: string;
+  status: AccountStatus;
 }): Record<string, unknown> {
   return {
     clerk_user_id: clerkUserId,
@@ -77,10 +65,9 @@ function buildNewUserPayload({
     avatar: "",
     major: "",
     graduation_year: null,
-    is_alumni: false,
-    is_hidden: false,
+    account_status: status,
+    website_visibility: "auto",
     is_inactive: false,
-    is_disaffiliated: false,
     title: "",
     socials: [],
   };
@@ -112,21 +99,18 @@ export async function findAppUserByEmail(email: string) {
   return (data as SupabaseUser | null) ?? null;
 }
 
-export async function findAccessReview(clerkUserId: string) {
-  const { data, error } = await supabaseAdmin
-    .from("user_access_reviews")
-    .select("*")
-    .eq("clerk_user_id", clerkUserId)
-    .maybeSingle();
-
+/** Keeps the rush record's account mirror in sync with the account. */
+async function syncPnmClerkLink(userId: string, clerkUserId: string | null) {
+  const { error } = await supabaseAdmin
+    .from("pnms")
+    .update({ clerk_user_id: clerkUserId, updated_at: new Date().toISOString() })
+    .eq("linked_user_id", userId);
   if (error) throw error;
-
-  return (data as AccessReview | null) ?? null;
 }
 
 /**
- * Links an unlinked profile to a Clerk account. Returns null when the row was
- * already linked (lost a race, or linked to someone else).
+ * Links an unlinked account row to a Clerk account. Returns null when the row
+ * was already linked (lost a race, or linked to someone else).
  */
 export async function linkAppUserToClerk(userId: string, clerkUserId: string) {
   const { data, error } = await supabaseAdmin
@@ -138,23 +122,25 @@ export async function linkAppUserToClerk(userId: string, clerkUserId: string) {
     .maybeSingle();
 
   if (error) throw error;
+  if (data) await syncPnmClerkLink(userId, clerkUserId);
 
   return (data as SupabaseUser | null) ?? null;
 }
 
 /**
- * Attaches a Clerk identity to its profile when one exists (by Clerk id, then
- * by email). Never creates a profile.
+ * Returns the account for a Clerk identity: the linked row, else an
+ * email-matched unlinked row (now linked), else a new "public" account.
  */
 export async function resolveAppUser({
   clerkUserId,
   email,
-}: ClerkIdentity): Promise<ResolveAppUserResult> {
+  name,
+}: ClerkIdentity): Promise<{ user: SupabaseUser; linked: boolean; created: boolean }> {
   const normalizedEmail = normalizeEmail(email);
 
   const linkedUser = await findAppUserByClerkId(clerkUserId);
   if (linkedUser) {
-    return { status: "active", user: linkedUser, linked: false };
+    return { user: linkedUser, linked: false, created: false };
   }
 
   const existingByEmail = await findAppUserByEmail(normalizedEmail);
@@ -170,130 +156,73 @@ export async function resolveAppUser({
 
     const linked = await linkAppUserToClerk(existingByEmail.id, clerkUserId);
     if (linked) {
-      return { status: "active", user: linked, linked: true };
+      return { user: linked, linked: true, created: false };
     }
 
     // Lost a race with a concurrent link; re-read the row.
     const raced = await findAppUserByClerkId(clerkUserId);
     if (raced) {
-      return { status: "active", user: raced, linked: false };
+      return { user: raced, linked: false, created: false };
     }
 
     throw new Error(`Failed to link profile for ${normalizedEmail}.`);
   }
 
-  const review = await findAccessReview(clerkUserId);
-  if (review) {
-    return { status: "denied", review };
+  const { data, error } = await supabaseAdmin
+    .from("users")
+    .insert(
+      buildNewUserPayload({
+        clerkUserId,
+        email: normalizedEmail,
+        name: normalizeName(name, normalizedEmail),
+        status: "public",
+      }),
+    )
+    .select("*")
+    .single();
+
+  if (!error && data) {
+    return { user: data as SupabaseUser, linked: false, created: true };
   }
-
-  return { status: "pending" };
-}
-
-export type ProvisionAppUserParams = ClerkIdentity & {
-  /** Role ids to assign on creation (e.g. a pledge class). */
-  roleIds?: string[];
-};
-
-/**
- * Admin approval path: creates the profile for a Clerk account (or links an
- * email-matched profile that already exists), assigns any requested roles and
- * clears a previous denial. Runs with the secret key.
- */
-export async function provisionAppUser({
-  clerkUserId,
-  email,
-  name,
-  roleIds = [],
-}: ProvisionAppUserParams): Promise<{ user: SupabaseUser; created: boolean }> {
-  const normalizedEmail = normalizeEmail(email);
-  const displayName = normalizeName(name, normalizedEmail);
-
-  let user: SupabaseUser | null = null;
-  let created = false;
-
-  const resolved = await resolveAppUser({ clerkUserId, email: normalizedEmail });
-  if (resolved.status === "active") {
-    user = resolved.user;
-  } else {
-    const payload = buildNewUserPayload({
-      clerkUserId,
-      email: normalizedEmail,
-      name: displayName,
-    });
-
-    const { data, error } = await supabaseAdmin
-      .from("users")
-      .insert(payload)
-      .select("*")
-      .single();
-
-    if (!error && data) {
-      user = data as SupabaseUser;
-      created = true;
-    } else if (error?.code === UNIQUE_VIOLATION) {
-      user =
-        (await findAppUserByClerkId(clerkUserId)) ??
-        (await findAppUserByEmail(normalizedEmail));
-    }
-
-    if (!user) {
-      throw error ?? new Error("Failed to provision app user.");
+  if (error?.code === UNIQUE_VIOLATION) {
+    // A concurrent sign-in (or the Clerk webhook) created it first.
+    const raced =
+      (await findAppUserByClerkId(clerkUserId)) ??
+      (await findAppUserByEmail(normalizedEmail));
+    if (raced?.clerk_user_id === clerkUserId) {
+      return { user: raced, linked: false, created: false };
     }
   }
-
-  if (!created && name && name.trim() && user.name !== name.trim()) {
-    const { data, error } = await supabaseAdmin
-      .from("users")
-      .update({ name: name.trim() })
-      .eq("id", user.id)
-      .select("*")
-      .single();
-    if (error) throw error;
-    user = data as SupabaseUser;
-  }
-
-  if (roleIds.length > 0) {
-    const { error } = await supabaseAdmin.from("user_roles").upsert(
-      roleIds.map((roleId) => ({ user_id: user!.id, role_id: roleId })),
-      { onConflict: "user_id,role_id", ignoreDuplicates: true },
-    );
-    if (error) throw error;
-  }
-
-  const { error: reviewError } = await supabaseAdmin
-    .from("user_access_reviews")
-    .delete()
-    .eq("clerk_user_id", clerkUserId);
-  if (reviewError) throw reviewError;
-
-  return { user, created };
+  throw error ?? new Error(`Failed to create an account for ${normalizedEmail}.`);
 }
 
 /**
- * Creates (or reuses) a profile for an email with no Clerk account linked yet,
- * e.g. a PNM who just became a pledge. Their first sign-in links it through
- * the email match in resolveAppUser().
+ * Creates (or reuses) an account row for an email with no Clerk account yet:
+ * an admin-created profile, or a rushee registered by a check-in. Their first
+ * sign-in links it through the email match in resolveAppUser().
  */
 export async function preprovisionAppUserByEmail({
   email,
   name,
+  status = "public",
   roleIds = [],
 }: {
   email: string;
   name?: string | null;
+  status?: AccountStatus;
   roleIds?: string[];
-}): Promise<SupabaseUser> {
+}): Promise<{ user: SupabaseUser; created: boolean }> {
   const normalizedEmail = normalizeEmail(email);
   let user = await findAppUserByEmail(normalizedEmail);
+  let created = false;
 
   if (!user) {
     const payload = buildNewUserPayload({
-      clerkUserId: "",
+      clerkUserId: null,
       email: normalizedEmail,
       name: normalizeName(name, normalizedEmail),
+      status,
     });
-    payload.clerk_user_id = null;
 
     const { data, error } = await supabaseAdmin.from("users").insert(payload).select("*").single();
     if (error?.code === UNIQUE_VIOLATION) {
@@ -302,53 +231,71 @@ export async function preprovisionAppUserByEmail({
       throw error;
     } else {
       user = data as SupabaseUser;
+      created = true;
     }
     if (!user) throw new Error(`Failed to create a profile for ${normalizedEmail}.`);
   }
 
-  if (roleIds.length > 0) {
-    const { error } = await supabaseAdmin.from("user_roles").upsert(
-      roleIds.map((roleId) => ({ user_id: user!.id, role_id: roleId })),
-      { onConflict: "user_id,role_id", ignoreDuplicates: true },
-    );
-    if (error) throw error;
+  await addUserRoles(user.id, roleIds);
+  return { user, created };
+}
+
+export async function addUserRoles(userId: string, roleIds: string[]) {
+  if (roleIds.length === 0) return;
+  const { error } = await supabaseAdmin.from("user_roles").upsert(
+    roleIds.map((roleId) => ({ user_id: userId, role_id: roleId })),
+    { onConflict: "user_id,role_id", ignoreDuplicates: true },
+  );
+  if (error) throw error;
+}
+
+/**
+ * Admin action: attaches a Clerk account to an existing profile that has no
+ * sign-in yet. If the Clerk account already owns an empty "public" account
+ * (made automatically at sign-in), that placeholder is removed first.
+ */
+export async function linkClerkAccountToProfile({
+  clerkUserId,
+  targetUserId,
+}: {
+  clerkUserId: string;
+  targetUserId: string;
+}): Promise<SupabaseUser> {
+  const { data: target, error: targetError } = await supabaseAdmin
+    .from("users")
+    .select("*")
+    .eq("id", targetUserId)
+    .maybeSingle();
+  if (targetError) throw targetError;
+  if (!target) throw new Error("Profile not found.");
+  if (target.clerk_user_id === clerkUserId) return target as SupabaseUser;
+  if (target.clerk_user_id) {
+    throw new Error("That profile is already linked to a different sign-in.");
   }
 
-  return user;
-}
+  const placeholder = await findAppUserByClerkId(clerkUserId);
+  if (placeholder) {
+    if (placeholder.account_status !== "public") {
+      throw new Error(
+        `This sign-in already belongs to ${placeholder.name} (${placeholder.account_status}). Unlink it there first.`,
+      );
+    }
+    const { count, error: rushError } = await supabaseAdmin
+      .from("pnms")
+      .select("id", { count: "exact", head: true })
+      .eq("linked_user_id", placeholder.id);
+    if (rushError) throw rushError;
+    if (count) throw new Error("This sign-in has rush history. Unlink it there first.");
 
-export async function denyAppUserAccess({
-  clerkUserId,
-  email,
-  name,
-  note,
-  reviewedBy,
-}: ClerkIdentity & { note?: string | null; reviewedBy: string }) {
-  const { data, error } = await supabaseAdmin
-    .from("user_access_reviews")
-    .upsert(
-      {
-        clerk_user_id: clerkUserId,
-        email: normalizeEmail(email),
-        name: name?.trim() || null,
-        status: "denied",
-        note: note?.trim() || null,
-        reviewed_by: reviewedBy,
-        reviewed_at: new Date().toISOString(),
-      },
-      { onConflict: "clerk_user_id" },
-    )
-    .select("*")
-    .single();
+    const { error: deleteError } = await supabaseAdmin.from("users").delete().eq("id", placeholder.id);
+    if (deleteError) {
+      throw new Error(
+        "The automatic account for this sign-in has other records attached, so it can't be merged.",
+      );
+    }
+  }
 
-  if (error) throw error;
-  return data as AccessReview;
-}
-
-export async function clearAppUserDenial(clerkUserId: string) {
-  const { error } = await supabaseAdmin
-    .from("user_access_reviews")
-    .delete()
-    .eq("clerk_user_id", clerkUserId);
-  if (error) throw error;
+  const linked = await linkAppUserToClerk(targetUserId, clerkUserId);
+  if (!linked) throw new Error("That profile was linked by someone else just now.");
+  return linked;
 }

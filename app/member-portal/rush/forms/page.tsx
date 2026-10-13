@@ -3,8 +3,7 @@
 import { useMemo, useState } from "react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ArrowLeft, Loader2, Pencil, Search, Trash2 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { ArrowLeft, ChevronRight, Loader2, Pencil, Search, Trash2 } from "lucide-react";
 import { useAuthStore } from "@/lib/auth-store";
 import { canManageRush } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
@@ -83,7 +82,7 @@ function toParticipantMap(list: Array<{ userId: string; role: string }>) {
 }
 
 export default function RushFormsPage() {
-  const { permissions, user } = useAuthStore();
+  const { permissions } = useAuthStore();
   const { cycle, cycleParam, isPending: cyclesPending } = useSelectedCycle();
   const queryClient = useQueryClient();
 
@@ -170,7 +169,7 @@ export default function RushFormsPage() {
       setAnswers({});
       setFieldErrors({});
       setPnm(null);
-      setParticipants(multiple && user ? { [template.participant_roles[0]?.id ?? ""]: [personKey("user", user.id)] } : {});
+      setParticipants({});
       await queryClient.invalidateQueries({ queryKey: ["rush", "responses"] });
     } catch (error) {
       if (error instanceof ApiError && error.fieldErrors) setFieldErrors(error.fieldErrors);
@@ -232,43 +231,35 @@ export default function RushFormsPage() {
                 {templates.isPending ? (
                   <Skeleton className="h-32 rounded-xl" />
                 ) : (
-                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  <div className="divide-y rounded-xl border bg-card">
                     {(templates.data ?? []).map((t) => (
-                      <div
+                      <button
                         key={t.id}
-                        className={cn(
-                          "flex flex-col rounded-xl border bg-card transition-colors",
-                          t.is_active ? "hover:border-primary hover:bg-muted/40" : "opacity-70",
-                        )}
+                        type="button"
+                        disabled={!t.is_active}
+                        onClick={() => {
+                          setTemplateId(t.id);
+                          setAnswers({});
+                          setFieldErrors({});
+                          setEventId("");
+                          setParticipants({});
+                        }}
+                        className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/50 disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:bg-transparent"
                       >
-                        <button
-                          type="button"
-                          disabled={!t.is_active}
-                          onClick={() => {
-                            setTemplateId(t.id);
-                            setAnswers({});
-                            setFieldErrors({});
-                            setEventId("");
-                            setParticipants(
-                              t.submission_mode === "multiple" && user && t.participant_roles[0]
-                                ? { [t.participant_roles[0].id]: [personKey("user", user.id)] }
-                                : {},
-                            );
-                          }}
-                          className="flex flex-1 flex-col gap-1.5 p-4 text-left disabled:cursor-not-allowed"
-                        >
-                          <span className="flex flex-wrap items-center gap-1.5 font-semibold">
+                        <div className="min-w-0 flex-1 space-y-0.5">
+                          <p className="flex flex-wrap items-center gap-1.5 font-medium">
                             {t.name}
                             {!t.is_active ? <Badge variant="outline">Disabled</Badge> : null}
                             {t.hide_author_in_deliberation ? <Badge variant="secondary">Anonymous</Badge> : null}
-                          </span>
-                          {t.description ? <span className="text-sm text-muted-foreground">{t.description}</span> : null}
-                          <span className="mt-auto pt-1 text-xs text-muted-foreground">
+                          </p>
+                          {t.description ? <p className="text-sm text-muted-foreground">{t.description}</p> : null}
+                          <p className="text-xs text-muted-foreground">
                             {t.fields.length} question{t.fields.length === 1 ? "" : "s"}
                             {t.submission_mode === "multiple" ? " · shared by everyone in the room" : ""}
-                          </span>
-                        </button>
-                      </div>
+                          </p>
+                        </div>
+                        <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      </button>
                     ))}
                   </div>
                 )}

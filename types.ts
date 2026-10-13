@@ -39,6 +39,8 @@ export type RoleRecord = {
   hidden: boolean;
   priority: number;
   type: RoleType;
+  /** Pledge classes only: members get portal access and public listing once true. */
+  is_initiated: boolean;
 };
 
 export type PermissionRecord = {

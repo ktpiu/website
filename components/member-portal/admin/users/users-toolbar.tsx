@@ -184,7 +184,7 @@ export function UsersToolbar({
             value={filters.search}
             onChange={(event) => update({ search: event.target.value })}
             placeholder="Search by name, email, or major"
-            aria-label="Search members"
+            aria-label="Search accounts"
             className="h-9 pl-9"
           />
         </div>
@@ -332,7 +332,7 @@ export function UsersToolbar({
 
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs text-muted-foreground">
-          Showing {shownCount} of {totalCount} members
+          Showing {shownCount} of {totalCount}
         </span>
         {chips.map((chip) => (
           <Badge key={chip.key} variant="secondary" className="gap-1 pr-1">

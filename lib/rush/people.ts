@@ -10,14 +10,12 @@ export type PersonOption = {
   avatar: string | null;
 };
 
-/** Current members: not alumni, hidden, or disaffiliated. */
+/** Current (active) members. */
 export async function listActives(): Promise<PersonOption[]> {
   const { data, error } = await supabaseAdmin
     .from("users")
     .select("id, name, avatar")
-    .eq("is_alumni", false)
-    .eq("is_hidden", false)
-    .eq("is_disaffiliated", false)
+    .eq("account_status", "active")
     .order("name");
   if (error) throw error;
   return ((data ?? []) as Array<{ id: string; name: string | null; avatar: string | null }>)

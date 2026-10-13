@@ -9,7 +9,8 @@ const RECENT_MS = 12 * 60 * 60 * 1000;
 /**
  * Events a PNM may see: public events of the current cycle, plus closed rush
  * (PNM-portal) events of any cycle where they've been invited to closed rush
- * and haven't been moved to former / pledge yet.
+ * and haven't been moved to former. Pledges keep seeing closed rush events so
+ * the portal never hints at a bid (PFC delivers those).
  */
 export async function loadVisibleEventsForPnm(pnm: PnmRow): Promise<RushEventRecord[]> {
   const [cycle, entriesRes] = await Promise.all([
@@ -22,7 +23,7 @@ export async function loadVisibleEventsForPnm(pnm: PnmRow): Promise<RushEventRec
     pnm.status === "former"
       ? []
       : ((entriesRes.data ?? []) as Array<{ cycle_id: string; stage: string; outcome: string | null }>)
-          .filter((e) => e.stage === "closed" && e.outcome === null)
+          .filter((e) => e.stage === "closed" && e.outcome !== "former")
           .map((e) => e.cycle_id);
 
   const filters: string[] = [];

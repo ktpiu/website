@@ -21,7 +21,6 @@ import {
   CalendarRange,
   ClipboardPen,
   Gavel,
-  Contact,
   CalendarCog,
   Settings2,
 } from "lucide-react";
@@ -51,13 +50,13 @@ import {
 } from "../ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useAuthStore } from "@/lib/auth-store";
+import { getUserDirectoryScope } from "@/lib/account-status";
 import Link from "next/link";
 import {
   canManageRush,
   canManageRushForms,
   canViewAdmin,
   canViewFinanceAdmin,
-  canViewRush,
 } from "@/lib/permissions";
 
 export function MemberPortalSidebar() {
@@ -149,7 +148,6 @@ export function MemberPortalSidebar() {
 
   const queryClient = useQueryClient();
   const cycleParam = useCycleParam();
-  const rushView = canViewRush(permissions);
   const rushManage = canManageRush(permissions);
   const rushNav = useQuery({
     queryKey: ["rush", "nav"],
@@ -176,7 +174,6 @@ export function MemberPortalSidebar() {
       href: "/member-portal/rush/deliberation",
       live: Boolean(rushNav.data?.deliberationLive),
     },
-    ...(rushView ? [{ icon: Contact, label: "PNMs", href: "/member-portal/rush/pnms" }] : []),
     ...(rushManage
       ? [
           {
@@ -192,9 +189,11 @@ export function MemberPortalSidebar() {
 
   const canViewFinance = canViewFinanceAdmin(permissions);
   const canViewCoreAdmin = canViewAdmin(permissions);
-  const showAdminGroup = canViewCoreAdmin || canViewFinance;
+  // Rush directors and committee get the rush-scoped view of User Management.
+  const canViewUsers = getUserDirectoryScope(permissions) !== null;
+  const showAdminGroup = canViewCoreAdmin || canViewFinance || canViewUsers;
   const adminItems = [
-    ...(canViewCoreAdmin ? coreAdminItems : []),
+    ...(canViewCoreAdmin ? coreAdminItems : canViewUsers ? coreAdminItems.slice(0, 1) : []),
     ...(canViewFinance ? financeAdminItems : []),
   ];
 

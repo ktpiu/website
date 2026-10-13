@@ -80,6 +80,7 @@ export function normalizeRole(
     hidden: boolean
     priority: number
     type: string
+    is_initiated: boolean
   }>
 ) {
   return {
@@ -89,6 +90,7 @@ export function normalizeRole(
     hidden: Boolean(role.hidden),
     priority: Number(role.priority ?? 0),
     type: normalizeRoleType(role.type),
+    is_initiated: Boolean(role.is_initiated),
   }
 }
 

@@ -8,9 +8,9 @@ import {
   RUSH_FORMS_MANAGE,
   RUSH_MANAGE,
   RUSH_VIEW,
-  fetchUserPermissionKeys,
 } from "@/lib/permissions";
 import { resolveAppUser } from "@/lib/app-user";
+import { getUserDirectoryScope } from "@/lib/account-status";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import type { User as SupabaseUser } from "@/lib/supabase";
 
@@ -28,18 +28,14 @@ export type AppAuthContext = {
 };
 
 /**
- * Why a signed-in Clerk account has no portal access. "pnm" is a rush
- * candidate's account: it belongs in /rush/portal, never the member portal.
+ * Why a signed-in account has no member-portal access. "rush" is a public or
+ * rushee account: it belongs in /rush/portal. "disaffiliated" covers dropped
+ * and disaffiliated members.
  */
-export type AccessStatus = "pending" | "denied" | "disaffiliated" | "pnm";
+export type AccessStatus = "rush" | "disaffiliated";
 
-export const PENDING_APPROVAL_MESSAGE =
-  "Your account is waiting for an administrator to approve it.";
-export const ACCESS_DENIED_MESSAGE =
-  "An administrator has declined portal access for this account.";
-
-export const PNM_ACCOUNT_MESSAGE =
-  "This is a rush account. Head to the rush portal to see your events.";
+export const RUSH_ACCOUNT_MESSAGE =
+  "This account doesn't have member portal access. Head to the rush portal.";
 
 export const DISAFFILIATED_MESSAGE =
   "This account is no longer affiliated with KTP and cannot access the member portal.";
@@ -121,15 +117,9 @@ export async function getSignedInIdentity() {
 }
 
 /**
- * Verifies the Clerk session, links it to its public.users profile (an
- * email-matched profile is linked on first sign-in; nothing is created), and
- * loads the user's permission keys. Throws a 403 tagged "pending", "denied" or "disaffiliated"
- * when the account has not been approved. Runs with the Supabase secret key.
- */
-/**
  * Short per-instance cache so a page that fires several API calls at once
- * resolves the member once. Permission or affiliation changes take effect
- * within CONTEXT_TTL_MS; /api/auth/me always reads fresh.
+ * resolves the member once. Permission or status changes take effect within
+ * CONTEXT_TTL_MS; /api/auth/me always reads fresh.
  */
 const CONTEXT_TTL_MS = 10_000;
 const contextCache = new Map<string, { value: AppAuthContext; expires: number }>();
@@ -140,27 +130,77 @@ function cacheContext(clerkUserId: string, value: AppAuthContext) {
   return value;
 }
 
-/** Fast path: one RPC returns the linked profile and its permission keys. */
+/** Fast path: one RPC returns the linked account and its permission keys. */
 async function loadLinkedContext(clerkUserId: string) {
   const { data, error } = await supabaseAdmin.rpc("app_user_context", {
     p_clerk_user_id: clerkUserId,
   });
   if (error) throw new RouteAuthError(500, error.message || "Failed to load user context.");
-  const row = data as { user: SupabaseUser; permissions: string[] } | null;
-  return row?.user ? row : null;
+  const row = data as { user: SupabaseUser; permissions: string[]; portal_access: boolean } | null;
+  return row?.user
+    ? { profile: row.user, permissions: row.permissions, portalAccess: Boolean(row.portal_access) }
+    : null;
 }
 
-function buildContext(profile: SupabaseUser, permissionKeys: string[]): AppAuthContext {
-  if (profile.is_disaffiliated) {
+export type SignedInAccount = {
+  profile: SupabaseUser;
+  permissions: string[];
+  /**
+   * May use the member portal: active or alumni
+   * (public.account_has_portal_access). Pledges get in once initiated.
+   */
+  portalAccess: boolean;
+};
+
+/**
+ * The signed-in Clerk session's account, whatever its status. First sign-in
+ * links an email-matched row or creates a "public" account. Used by the rush
+ * portal, which public, rushee and pledge accounts use.
+ */
+export async function requireSignedInAccount(): Promise<SignedInAccount> {
+  const { userId } = await auth();
+  if (!userId) throw new RouteAuthError(401, "Unauthorized.");
+
+  const linked = await loadLinkedContext(userId);
+  if (linked) return linked;
+
+  const identity = await getSignedInIdentity();
+  if (!identity) throw new RouteAuthError(401, "Unauthorized.");
+
+  try {
+    await resolveAppUser(identity);
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message ? error.message : "Failed to load your account.";
+    throw new RouteAuthError(500, message);
+  }
+  const resolved = await loadLinkedContext(userId);
+  if (!resolved) throw new RouteAuthError(500, "Failed to load your account.");
+  return resolved;
+}
+
+function buildContext({ profile, permissions, portalAccess }: SignedInAccount): AppAuthContext {
+  if (profile.account_status === "dropped" || profile.account_status === "disaffiliated") {
     throw new RouteAuthError(403, DISAFFILIATED_MESSAGE, "disaffiliated");
+  }
+  // Public, rushee and pledge accounts use the rush portal.
+  if (!portalAccess) {
+    throw new RouteAuthError(403, RUSH_ACCOUNT_MESSAGE, "rush");
   }
   const appUser = parseAppUser(profile);
   if (!appUser) {
     throw new RouteAuthError(403, "Not authorized for this application.");
   }
-  return { appUser, profile, permissions: new Set(permissionKeys) };
+  return { appUser, profile, permissions: new Set(permissions) };
 }
 
+/**
+ * Verifies the Clerk session, resolves its account and loads its permission
+ * keys. Only accounts with portal access pass (actives, alumni); public,
+ * rushee and pledge accounts get a 403
+ * tagged "rush", dropped and disaffiliated ones a 403 tagged "disaffiliated".
+ * Runs with the Supabase secret key.
+ */
 export async function requireAppAuthContext(
   options: { fresh?: boolean } = {},
 ): Promise<AppAuthContext> {
@@ -174,47 +214,7 @@ export async function requireAppAuthContext(
     if (cached && cached.expires > Date.now()) return cached.value;
   }
 
-  // Already-linked members (nearly every request) skip the Clerk API call.
-  const linked = await loadLinkedContext(userId);
-  if (linked) {
-    return cacheContext(userId, buildContext(linked.user, linked.permissions));
-  }
-
-  // Slow path: first sign-in (link by email), pending, denied or a PNM account.
-  const identity = await getSignedInIdentity();
-  if (!identity) {
-    throw new RouteAuthError(401, "Unauthorized.");
-  }
-
-  let profile: SupabaseUser;
-  try {
-    const resolved = await resolveAppUser(identity);
-    if (resolved.status === "pending") {
-      const { data: pnm } = await supabaseAdmin
-        .from("pnms")
-        .select("id")
-        .eq("clerk_user_id", identity.clerkUserId)
-        .maybeSingle();
-      if (pnm) {
-        throw new RouteAuthError(403, PNM_ACCOUNT_MESSAGE, "pnm");
-      }
-      throw new RouteAuthError(403, PENDING_APPROVAL_MESSAGE, "pending");
-    }
-    if (resolved.status === "denied") {
-      throw new RouteAuthError(403, ACCESS_DENIED_MESSAGE, "denied");
-    }
-    profile = resolved.user;
-  } catch (error) {
-    if (error instanceof RouteAuthError) throw error;
-    const message =
-      error instanceof Error && error.message
-        ? error.message
-        : "Failed to load user context.";
-    throw new RouteAuthError(500, message);
-  }
-
-  const permissionKeys = await fetchUserPermissionKeys(profile.id, supabaseAdmin);
-  return cacheContext(userId, buildContext(profile, permissionKeys));
+  return cacheContext(userId, buildContext(await requireSignedInAccount()));
 }
 
 export function assertFinanceViewPermission(context: AppAuthContext) {
@@ -236,6 +236,13 @@ export function assertAdminViewPermission(context: AppAuthContext) {
   if (!context.permissions.has(ADMIN_VIEW)) {
     throw new RouteAuthError(403, "Missing admin view permission.");
   }
+}
+
+/** Viewer may open User Management (all accounts, or the rush-scoped view). */
+export function assertUserDirectoryPermission(context: AppAuthContext) {
+  const scope = getUserDirectoryScope(context.permissions);
+  if (!scope) throw new RouteAuthError(403, "Missing user management permission.");
+  return scope;
 }
 
 export function assertUsersEditPermission(context: AppAuthContext) {

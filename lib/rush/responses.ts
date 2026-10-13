@@ -35,13 +35,12 @@ export async function validateResponse(templateId: string, rawAnswers: unknown) 
 export { conflictField } from "@/lib/rush/conflicts";
 
 /**
- * Validates who was in the room for a multi-person form. The submitter is
- * always included. Returns [] for single-submitter forms.
+ * Validates who was in the room for a multi-person form, exactly as chosen.
+ * Returns [] for single-submitter forms.
  */
 export async function validateParticipants(
   template: RushFormTemplate,
   raw: unknown,
-  authorId: string,
 ): Promise<ResponseParticipant[]> {
   if (template.submission_mode !== "multiple") return [];
   const input = (raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {}) as Record<string, unknown>;
@@ -63,9 +62,6 @@ export async function validateParticipants(
       seen.add(userId);
       result.push({ userId, role: role.id });
     }
-  }
-  if (!seen.has(authorId) && template.participant_roles[0]) {
-    result.push({ userId: authorId, role: template.participant_roles[0].id });
   }
 
   const ids = result.map((p) => p.userId);

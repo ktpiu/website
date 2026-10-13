@@ -3,7 +3,8 @@ import { randomUUID } from "crypto";
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { RouteAuthError } from "@/lib/server-auth";
-import { normalizeEmail } from "@/lib/app-user";
+import { normalizeEmail, preprovisionAppUserByEmail } from "@/lib/app-user";
+import type { User as SupabaseUser } from "@/lib/supabase";
 import { AVATAR_ALLOWED_TYPES, validateAvatarFile } from "@/lib/avatar-upload";
 import { validateResumeFile } from "@/lib/rush/resume-upload";
 import { parseFields, parseParticipantRoles, type RushCycle, type RushFormTemplate } from "@/lib/rush/types";
@@ -108,6 +109,28 @@ export async function resolveCycle(request: Request): Promise<RushCycle | null> 
   return cycleId && cycleId !== "current" ? getCycle(cycleId) : getActiveCycle();
 }
 
+export const RUSH_CONCLUDED_MESSAGE = "This rush has concluded, so changes are closed.";
+
+/** Phases of the given cycles, keyed by id. */
+export async function getCyclePhases(cycleIds: string[]) {
+  const ids = Array.from(new Set(cycleIds));
+  const phases = new Map<string, RushCycle["phase"]>();
+  if (ids.length === 0) return phases;
+  const { data, error } = await supabaseAdmin.from("rush_cycles").select("id, phase").in("id", ids);
+  if (error) throw error;
+  for (const row of (data ?? []) as Array<{ id: string; phase: RushCycle["phase"] }>) phases.set(row.id, row.phase);
+  return phases;
+}
+
+/**
+ * Rejects rush-portal changes (timeslots, check-ins) once the cycle has
+ * concluded. Rush directors can still fix records from the member portal.
+ */
+export async function assertCycleNotConcluded(cycleId: string) {
+  const phase = (await getCyclePhases([cycleId])).get(cycleId);
+  if (phase === "concluded") throw new RushError(403, RUSH_CONCLUDED_MESSAGE, "CONCLUDED");
+}
+
 /** The ?cycleId= param as a real id ("current" resolves to the active cycle). */
 export async function resolveCycleId(request: Request): Promise<string | null> {
   const cycleId = new URL(request.url).searchParams.get("cycleId");
@@ -193,10 +216,54 @@ export async function findOrCreatePnm({ email, name }: { email: string; name: st
 }
 
 /**
- * Adds a PNM to a cycle (open rush stage). A former PNM rushing again in a
+ * The account behind a rush record. Creates an unlinked account row (status
+ * "rushee") when the person has never signed in; their first sign-in links it
+ * by email. Never changes an existing account's status.
+ */
+export async function ensurePnmAccount(pnm: PnmRow): Promise<SupabaseUser> {
+  if (pnm.linked_user_id) {
+    const { data, error } = await supabaseAdmin.from("users").select("*").eq("id", pnm.linked_user_id).maybeSingle();
+    if (error) throw error;
+    if (data) return data as SupabaseUser;
+  }
+
+  const { user } = await preprovisionAppUserByEmail({ email: pnm.email, name: pnm.name, status: "rushee" });
+  const { error } = await supabaseAdmin
+    .from("pnms")
+    .update({ linked_user_id: user.id, clerk_user_id: user.clerk_user_id ?? null, updated_at: new Date().toISOString() })
+    .eq("id", pnm.id);
+  if (error) throw error;
+  pnm.linked_user_id = user.id;
+  pnm.clerk_user_id = user.clerk_user_id ?? null;
+  return user;
+}
+
+/** The rush record for an account, if they've ever rushed. */
+export async function findPnmForUser(user: Pick<SupabaseUser, "id" | "clerk_user_id" | "email">) {
+  const { data, error } = await supabaseAdmin.from("pnms").select("*").eq("linked_user_id", user.id).maybeSingle();
+  if (error) throw error;
+  if (data) return data as PnmRow;
+  // Rush records created before accounts were unified.
+  const legacy = user.clerk_user_id
+    ? await supabaseAdmin.from("pnms").select("*").eq("clerk_user_id", user.clerk_user_id).maybeSingle()
+    : { data: null, error: null };
+  if (legacy.error) throw legacy.error;
+  return (legacy.data as PnmRow | null) ?? findPnmByEmail(user.email);
+}
+
+/** Sets account_status with the secret key (the database trigger blocks every other path). */
+export async function writeAccountStatus(userIds: string[], status: SupabaseUser["account_status"]) {
+  if (userIds.length === 0) return;
+  const { error } = await supabaseAdmin.from("users").update({ account_status: status }).in("id", userIds);
+  if (error) throw error;
+}
+
+/**
+ * Adds a PNM to a cycle (open rush stage) and registers their account for
+ * rush: a public account becomes a rushee. A former PNM rushing again in a
  * new semester becomes an open rush PNM again.
  */
-export async function ensureCycleEntry(pnm: Pick<PnmRow, "id" | "status">, cycleId: string) {
+export async function ensureCycleEntry(pnm: PnmRow, cycleId: string) {
   const { data, error } = await supabaseAdmin
     .from("pnm_cycle_entries")
     .upsert({ pnm_id: pnm.id, cycle_id: cycleId }, { onConflict: "pnm_id,cycle_id", ignoreDuplicates: true })
@@ -209,7 +276,11 @@ export async function ensureCycleEntry(pnm: Pick<PnmRow, "id" | "status">, cycle
       .update({ status: "open", updated_at: new Date().toISOString() })
       .eq("id", pnm.id);
     if (statusError) throw statusError;
+    pnm.status = "open";
   }
+
+  const account = await ensurePnmAccount(pnm);
+  if (account.account_status === "public") await writeAccountStatus([account.id], "rushee");
   return created;
 }
 

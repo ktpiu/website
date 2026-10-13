@@ -109,7 +109,7 @@ function buildNewUserPayload({ clerkUserId, email, name }) {
     role: "newmember",
     avatar: "",
     graduation_year: null,
-    is_alumni: false,
+    account_status: "public",
     major: "",
     title: "",
     socials: [],

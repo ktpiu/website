@@ -159,7 +159,7 @@ export const STATUS_LABELS: Record<PnmStatus, string> = {
   open: "Open rush",
   closed: "Closed rush",
   pledge: "Pledge",
-  former: "Former PNM",
+  former: "Former rushee",
 };
 
 export function isIuEmail(email: string) {

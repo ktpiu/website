@@ -81,7 +81,8 @@ export function hasUnsavedRoleChanges(
       baseRole.description !== draftRole.description ||
       baseRole.hidden !== draftRole.hidden ||
       baseRole.priority !== draftRole.priority ||
-      baseRole.type !== draftRole.type
+      baseRole.type !== draftRole.type ||
+      baseRole.is_initiated !== draftRole.is_initiated
     ) {
       return true;
     }
@@ -156,7 +157,7 @@ export async function fetchRolesData(): Promise<RolesDataBundle> {
   const [rolesRes, permissionsRes, rolePermissionsRes] = await Promise.all([
     supabase
       .from("roles")
-      .select("id, name, description, hidden, priority, type")
+      .select("id, name, description, hidden, priority, type, is_initiated")
       .order("priority", { ascending: false })
       .order("name", { ascending: true }),
     supabase.from("permissions").select("*").order("key", { ascending: true }),
@@ -230,7 +231,7 @@ export async function createRoleRecord(input: {
       priority: 0,
       type: input.type,
     })
-    .select("id, name, description, hidden, priority, type")
+    .select("id, name, description, hidden, priority, type, is_initiated")
     .single();
 
   if (error) throw error;
@@ -331,7 +332,7 @@ export async function persistRoleDrafts(params: {
   baseRolePermissions: Record<string, Set<string>>;
   draftRolePermissions: Record<string, Set<string>>;
   permissionIdByKey: Map<string, string>;
-}) {
+}): Promise<{ activated: number }> {
   const {
     baseRoles,
     draftRoles,
@@ -341,6 +342,7 @@ export async function persistRoleDrafts(params: {
   } = params;
 
   const baseById = new Map(baseRoles.map((role) => [role.id, role]));
+  let activated = 0;
 
   for (const role of draftRoles) {
     const baseRole = baseById.get(role.id);
@@ -352,20 +354,40 @@ export async function persistRoleDrafts(params: {
       baseRole.hidden !== role.hidden ||
       baseRole.priority !== role.priority ||
       baseRole.type !== role.type;
-    if (!changed) continue;
+    if (changed) {
+      const { error } = await supabase
+        .from("roles")
+        .update({
+          name: role.name,
+          description: role.description,
+          hidden: role.hidden,
+          priority: role.priority,
+          type: role.type,
+        })
+        .eq("id", role.id);
 
-    const { error } = await supabase
-      .from("roles")
-      .update({
-        name: role.name,
-        description: role.description,
-        hidden: role.hidden,
-        priority: role.priority,
-        type: role.type,
-      })
-      .eq("id", role.id);
+      if (error) throw error;
+    }
 
-    if (error) throw error;
+    // Initiation goes through the server: it also moves the class's pledges to active.
+    if (baseRole.is_initiated !== role.is_initiated && role.type === "pledge_class") {
+      const response = await fetch(
+        `/api/admin/roles/${encodeURIComponent(role.id)}/initiation`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ initiated: role.is_initiated }),
+        },
+      );
+      const payload = (await response.json().catch(() => null)) as {
+        activated?: number;
+        error?: string;
+      } | null;
+      if (!response.ok) {
+        throw new Error(payload?.error ?? `Failed to update ${role.name}.`);
+      }
+      activated += payload?.activated ?? 0;
+    }
   }
 
   const permissionSyncRoleIds = new Set([
@@ -394,6 +416,8 @@ export async function persistRoleDrafts(params: {
     });
     if (error) throw error;
   }
+
+  return { activated };
 }
 
 export async function deleteRoleRecord(roleId: string) {

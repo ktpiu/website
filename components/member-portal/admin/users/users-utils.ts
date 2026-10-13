@@ -1,5 +1,6 @@
-import { supabase, RoleType, User as SupabaseUser } from "@/lib/supabase";
-import { getGradeLabel } from "@/lib/members";
+import { supabase, RoleType, User as SupabaseUser, WebsiteVisibility } from "@/lib/supabase";
+import { ACCOUNT_STATUSES, type AccountStatus, type UserDirectoryScope } from "@/lib/account-status";
+import { getGradeLabel, isListedOnWebsite } from "@/lib/members";
 import { isProfileIncomplete } from "@/lib/profile-completeness";
 
 export type EditableFields = Pick<
@@ -10,10 +11,8 @@ export type EditableFields = Pick<
   | "avatar"
   | "socials"
   | "graduation_year"
-  | "is_alumni"
-  | "is_hidden"
   | "is_inactive"
-  | "is_disaffiliated"
+  | "website_visibility"
 >;
 
 export type SocialPlatform = "insta" | "linkedin";
@@ -23,32 +22,17 @@ export type SocialEntry = {
   url: string;
 };
 
-/** Admin-managed boolean flags edited from the dialog's status switches. */
+/**
+ * Admin-managed boolean flags edited from the dialog's switches. Lifecycle
+ * (alumni, dropped, disaffiliated) is the account status, changed from the
+ * row menu; website visibility is the eye menu.
+ */
 export const STATUS_FLAGS = [
-  {
-    key: "isHidden",
-    column: "is_hidden",
-    label: "Hidden",
-    description: "Hides this member from all public pages.",
-  },
   {
     key: "isInactive",
     column: "is_inactive",
     label: "Temporarily inactive",
     description: "For members away for a while (e.g. studying abroad).",
-  },
-  {
-    key: "isDisaffiliated",
-    column: "is_disaffiliated",
-    label: "Disaffiliated / dropped",
-    description:
-      "Hides this member from public pages and blocks them from the member portal.",
-  },
-  {
-    key: "isAlumni",
-    column: "is_alumni",
-    label: "Alumni",
-    description: "Lists this member under Alumni on the public members page.",
   },
 ] as const;
 
@@ -103,10 +87,9 @@ export type UserFilters = {
 export type StatusFilterMode = "include" | "exclude";
 
 export const STATUS_FILTER_OPTIONS = [
-  { key: "hidden", label: "Hidden from public" },
+  { key: "onWebsite", label: "On the public website" },
+  { key: "hidden", label: "Manually hidden from website" },
   { key: "inactive", label: "Temporarily inactive" },
-  { key: "disaffiliated", label: "Disaffiliated / dropped" },
-  { key: "alumni", label: "Alumni" },
   { key: "incompleteProfile", label: "Incomplete profile" },
   { key: "notLinked", label: "Not linked to a sign-in" },
   { key: "noRoles", label: "No roles" },
@@ -125,24 +108,45 @@ export const EMPTY_USER_FILTERS: UserFilters = {
 
 export type SortKey =
   | "name"
+  | "account_status"
   | "email"
   | "major"
   | "graduation_year"
   | "created_at";
 
-type UserRoleJoinRow = {
-  user_id: string | null;
-  role_id: string | null;
-  roles?:
-    | { id?: string | null; name?: string | null }
-    | Array<{ id?: string | null; name?: string | null }>
-    | null;
+/** An account's rush record, with its entry in the active cycle. */
+export type RushSummary = {
+  pnmId: string;
+  pnmStatus: "open" | "closed" | "pledge" | "former";
+  stage: "open" | "closed" | null;
+  group: string | null;
+  outcome: string | null;
 };
 
-type LoadUsersDataResult = {
+export type LoadUsersDataResult = {
+  scope: UserDirectoryScope;
   users: SupabaseUser[];
   roles: RoleOption[];
   userRoleIds: Record<string, string[]>;
+  rush: Record<string, RushSummary>;
+  cycle: { id: string; label: string; phase: "open" | "closed" | "concluded" } | null;
+};
+
+/** A Clerk sign-in with no profile row. */
+export type UnlinkedClerkAccount = {
+  clerkUserId: string;
+  email: string | null;
+  name: string | null;
+  imageUrl: string | null;
+  createdAt: string;
+  lastSignInAt: string | null;
+  /** An unlinked profile with the same email. */
+  matchingProfile: { id: string; name: string } | null;
+};
+
+export type StatusChangeResult = {
+  changed: string[];
+  skipped: Array<{ id: string; name: string; reason: string }>;
 };
 
 export const userTableColumns: Array<{
@@ -150,6 +154,7 @@ export const userTableColumns: Array<{
   sortKey?: SortKey;
 }> = [
   { label: "User", sortKey: "name" },
+  { label: "Status", sortKey: "account_status" },
   { label: "Roles", sortKey: undefined },
   { label: "Major", sortKey: "major" },
   { label: "Year", sortKey: "graduation_year" },
@@ -163,56 +168,85 @@ function isRoleType(value: unknown): value is RoleType {
   return typeof value === "string" && (ROLE_TYPES as string[]).includes(value);
 }
 
-export async function loadUsersData(): Promise<LoadUsersDataResult> {
-  const [usersRes, rolesRes, userRolesRes] = await Promise.all([
-    supabase.from("users").select("*").order("name", { ascending: true }),
-    supabase
-      .from("roles")
-      .select("id, name, priority, type")
-      .order("priority", { ascending: false })
-      .order("name", { ascending: true }),
-    supabase.from("user_roles").select("user_id, role_id, roles(id, name)"),
-  ]);
-
-  if (usersRes.error) throw usersRes.error;
-  if (rolesRes.error) throw rolesRes.error;
-  if (userRolesRes.error) throw userRolesRes.error;
-
-  const roles = (rolesRes.data ?? []).flatMap((role) => {
-    if (typeof role.id !== "string" || typeof role.name !== "string") {
-      return [];
-    }
-
-    return [
-      {
-        id: role.id,
-        name: role.name,
-        priority: typeof role.priority === "number" ? role.priority : 0,
-        type: isRoleType(role.type) ? role.type : "general",
-      },
-    ];
+async function apiFetch<T>(url: string, init?: RequestInit & { json?: unknown }): Promise<T> {
+  const response = await fetch(url, {
+    ...init,
+    cache: "no-store",
+    headers: init?.json !== undefined ? { "Content-Type": "application/json" } : undefined,
+    body: init?.json !== undefined ? JSON.stringify(init.json) : init?.body,
   });
-
-  const userRoleIds: Record<string, string[]> = {};
-  for (const row of (userRolesRes.data ?? []) as UserRoleJoinRow[]) {
-    const userId = row.user_id;
-    const joinedRole = Array.isArray(row.roles) ? row.roles[0] : row.roles;
-    const roleId =
-      row.role_id ??
-      (joinedRole && typeof joinedRole.id === "string" ? joinedRole.id : null);
-
-    if (!userId || !roleId) continue;
-    userRoleIds[userId] = userRoleIds[userId] ?? [];
-    if (!userRoleIds[userId].includes(roleId)) {
-      userRoleIds[userId].push(roleId);
-    }
+  const payload = (await response.json().catch(() => null)) as (T & { error?: string }) | null;
+  if (!response.ok || !payload) {
+    throw new Error(payload?.error ?? "Request failed.");
   }
+  return payload;
+}
 
+/** Accounts the viewer may see (scoped on the server), with roles and rush info. */
+export async function loadUsersData(): Promise<LoadUsersDataResult> {
+  const data = await apiFetch<LoadUsersDataResult>("/api/admin/users");
   return {
-    users: usersRes.data ?? [],
-    roles,
-    userRoleIds,
+    ...data,
+    roles: data.roles.map((role) => ({
+      ...role,
+      priority: typeof role.priority === "number" ? role.priority : 0,
+      type: isRoleType(role.type) ? role.type : "general",
+    })),
   };
+}
+
+export function changeAccountStatuses(input: {
+  userIds: string[];
+  status: AccountStatus;
+  pledgeRoleId?: string | null;
+}) {
+  return apiFetch<StatusChangeResult>("/api/admin/users/status", { method: "POST", json: input });
+}
+
+export async function createProfile(input: {
+  name: string;
+  email: string;
+  status: AccountStatus;
+  graduationYear?: string;
+}) {
+  return (await apiFetch<{ user: SupabaseUser }>("/api/admin/users", { method: "POST", json: input })).user;
+}
+
+export async function fetchUnlinkedAccounts() {
+  return (await apiFetch<{ accounts: UnlinkedClerkAccount[] }>("/api/admin/users/unlinked")).accounts;
+}
+
+export async function linkUnlinkedAccount(clerkUserId: string, userId: string) {
+  return (
+    await apiFetch<{ user: SupabaseUser }>(`/api/admin/users/unlinked/${encodeURIComponent(clerkUserId)}`, {
+      method: "POST",
+      json: { action: "link", userId },
+    })
+  ).user;
+}
+
+export async function createProfileForUnlinked(
+  clerkUserId: string,
+  input: { name: string; status: AccountStatus },
+) {
+  return (
+    await apiFetch<{ user: SupabaseUser }>(`/api/admin/users/unlinked/${encodeURIComponent(clerkUserId)}`, {
+      method: "POST",
+      json: { action: "create", ...input },
+    })
+  ).user;
+}
+
+/** Moves a public account's sign-in onto another profile and removes the public one. */
+export async function linkSignInToProfile(userId: string, targetUserId: string) {
+  return apiFetch<{ user: SupabaseUser; removedUserId: string }>(
+    `/api/admin/users/${encodeURIComponent(userId)}/link-sign-in`,
+    { method: "POST", json: { targetUserId } },
+  );
+}
+
+export async function setWebsiteVisibility(userId: string, visibility: WebsiteVisibility) {
+  return updateUserRecord(userId, { website_visibility: visibility });
 }
 
 export function getEditableValue(
@@ -358,6 +392,12 @@ export function sortUsers(
       return sortDirection === "asc" ? aDate - bDate : bDate - aDate;
     }
 
+    if (key === "account_status") {
+      const diff =
+        ACCOUNT_STATUSES.indexOf(a.account_status) - ACCOUNT_STATUSES.indexOf(b.account_status);
+      return sortDirection === "asc" ? diff : -diff;
+    }
+
     if (key === "graduation_year") {
       const aYear = a.graduation_year ?? Number.POSITIVE_INFINITY;
       const bYear = b.graduation_year ?? Number.POSITIVE_INFINITY;
@@ -416,14 +456,12 @@ function matchesStatus(
   ownRoles: RoleOption[],
 ): boolean {
   switch (key) {
+    case "onWebsite":
+      return isListedOnWebsite(user, ownRoles);
     case "hidden":
-      return Boolean(user.is_hidden);
+      return user.website_visibility === "hidden";
     case "inactive":
       return Boolean(user.is_inactive);
-    case "disaffiliated":
-      return Boolean(user.is_disaffiliated);
-    case "alumni":
-      return Boolean(user.is_alumni);
     case "incompleteProfile":
       return isProfileIncomplete(user, ownRoles);
     case "notLinked":

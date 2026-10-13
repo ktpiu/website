@@ -5,32 +5,28 @@ import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import { NativeSelect } from "@/components/rush/native-select";
-import { supabase } from "@/lib/supabase";
 import { errorMessage, rushFetch } from "@/lib/rush/client";
 import { STAGE_LABELS, type RushCycle, type RushStage } from "@/lib/rush/types";
 import { cn } from "@/lib/utils";
 
-type Action = "advance" | "pledge" | "former";
+type Action = "advance" | "former";
 
 const ACTION_COPY: Record<Action, { label: string; description: string }> = {
   advance: {
     label: "Invite to closed rush",
     description: "Moves them to closed rush, unlocks closed rush events in their portal and emails an invite.",
   },
-  pledge: {
-    label: "Make pledges",
-    description: "Creates their member profile (linked to their email) and assigns the pledge class you choose.",
-  },
   former: {
-    label: "Move to former PNM",
+    label: "End their rush",
     description:
-      "Ends their rush this semester. They lose access to closed rush events and their portal invites them back next semester.",
+      "Ends their rush this semester. Their accounts go back to public, they lose access to closed rush events, and their portal invites them back next semester.",
   },
 };
 
-/** Bulk move PNMs within a cycle: open rush → closed / former, closed rush → pledge / former. */
+/**
+ * Bulk move PNMs within a cycle: open rush → closed / former, closed rush →
+ * former. Accepting a bid happens in User Management, not deliberation.
+ */
 export function TransitionDialog({
   open,
   onOpenChange,
@@ -47,28 +43,12 @@ export function TransitionDialog({
   pnms: Array<{ id: string; name: string }>;
   onDone: () => void;
 }) {
-  const actions: Action[] = stage === "open" ? ["advance", "former"] : ["pledge", "former"];
+  const actions: Action[] = stage === "open" ? ["advance", "former"] : ["former"];
   const [action, setAction] = useState<Action>(actions[0]);
-  const [pledgeClasses, setPledgeClasses] = useState<Array<{ id: string; name: string }>>([]);
-  const [pledgeRoleId, setPledgeRoleId] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (open) setAction(stage === "open" ? "advance" : "pledge");
-  }, [open, stage]);
-
-  useEffect(() => {
-    if (!open || stage !== "closed") return;
-    supabase
-      .from("roles")
-      .select("id, name, priority")
-      .eq("type", "pledge_class")
-      .order("priority")
-      .then(({ data }) => {
-        const roles = (data ?? []) as Array<{ id: string; name: string }>;
-        setPledgeClasses(roles);
-        setPledgeRoleId((current) => current || roles[0]?.id || "");
-      });
+    if (open) setAction(stage === "open" ? "advance" : "former");
   }, [open, stage]);
 
   const submit = async () => {
@@ -76,7 +56,7 @@ export function TransitionDialog({
     try {
       await rushFetch("/api/rush/transition", {
         method: "POST",
-        json: { cycleId: cycle.id, pnmIds: pnms.map((p) => p.id), action, pledgeRoleId: action === "pledge" ? pledgeRoleId : null },
+        json: { cycleId: cycle.id, pnmIds: pnms.map((p) => p.id), action },
       });
       toast.success(`Moved ${pnms.length} PNM${pnms.length === 1 ? "" : "s"}.`);
       onOpenChange(false);
@@ -113,19 +93,6 @@ export function TransitionDialog({
             </button>
           ))}
         </div>
-        {action === "pledge" ? (
-          <div className="space-y-2">
-            <Label htmlFor="pledge-class">Pledge class</Label>
-            <NativeSelect id="pledge-class" value={pledgeRoleId} onChange={(e) => setPledgeRoleId(e.target.value)}>
-              <option value="">No pledge class</option>
-              {pledgeClasses.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name}
-                </option>
-              ))}
-            </NativeSelect>
-          </div>
-        ) : null}
         <p className="max-h-24 overflow-y-auto text-xs text-muted-foreground">{pnms.map((p) => p.name).join(", ")}</p>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>

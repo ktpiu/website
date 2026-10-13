@@ -5,10 +5,10 @@ export const dynamic = "force-dynamic";
 
 /**
  * Returns the signed-in member's profile and permission keys. Calling this
- * also links the Clerk account to its email-matched public.users row on first
+ * also links (or creates) the Clerk account's public.users row on first
  * sign-in, which is what makes the Clerk session token usable against Supabase
- * RLS. Accounts without a profile get a 403 whose body carries
- * `status: "pending" | "denied"` so the client can show the right screen.
+ * RLS. Accounts without member portal access get a 403 whose body carries
+ * `status: "rush" | "disaffiliated"` so the client can route them.
  */
 export async function GET() {
   try {

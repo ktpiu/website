@@ -6,10 +6,9 @@ import { supabaseAdmin } from "@/lib/supabase-admin";
 export const dynamic = "force-dynamic";
 
 /**
- * Clerk webhook. Links a new Clerk account to its email-matched public.users
- * profile as soon as it is created. Accounts with no matching profile are not
- * provisioned here; they show up under "Pending approval" in User Management
- * until an admin approves or denies them.
+ * Clerk webhook. Gives a new Clerk account its public.users row as soon as it
+ * is created: an email-matched profile is linked, otherwise a "public"
+ * account is created (see resolveAppUser).
  *
  * Configure in the Clerk dashboard (Webhooks -> Add endpoint) with the URL
  * https://<site>/api/webhooks/clerk and subscribe to user.created, user.updated
@@ -29,11 +28,6 @@ type ClerkUserData = {
   email_addresses?: ClerkEmailAddress[];
   public_metadata?: Record<string, unknown> | null;
 };
-
-/** Rush candidates' accounts never link to (or wait on) a member profile. */
-function isPnmAccount(user: ClerkUserData) {
-  return user.public_metadata?.accountType === "pnm";
-}
 
 function getPrimaryEmail(user: ClerkUserData) {
   const addresses = user.email_addresses ?? [];
@@ -59,9 +53,6 @@ export async function POST(request: NextRequest) {
     switch (event.type) {
       case "user.created": {
         const user = event.data as ClerkUserData;
-        if (isPnmAccount(user)) {
-          return NextResponse.json({ ok: true, skipped: "pnm account" });
-        }
         const email = getPrimaryEmail(user);
         if (!email) {
           console.warn("Clerk user.created without an email address:", user.id);
@@ -74,20 +65,13 @@ export async function POST(request: NextRequest) {
           name: getName(user),
         });
 
-        return NextResponse.json({
-          ok: true,
-          status: resolved.status,
-          linked: resolved.status === "active" && resolved.linked,
-        });
+        return NextResponse.json({ ok: true, linked: resolved.linked, created: resolved.created });
       }
 
       case "user.updated": {
         // Keep the profile's email in sync with the Clerk primary email so
         // sign-in, email matching and admin lookups keep working after a change.
         const user = event.data as ClerkUserData;
-        if (isPnmAccount(user)) {
-          return NextResponse.json({ ok: true, skipped: "pnm account" });
-        }
         const email = getPrimaryEmail(user);
         if (!email) {
           return NextResponse.json({ ok: true, skipped: "no email" });
@@ -95,18 +79,13 @@ export async function POST(request: NextRequest) {
 
         const profile = await findAppUserByClerkId(user.id);
         if (!profile) {
-          // Not linked yet (or the email changed to one with a profile); try
-          // the email match again, but never create a profile here.
+          // Not linked yet: link by email, or create the public account.
           const resolved = await resolveAppUser({
             clerkUserId: user.id,
             email,
             name: getName(user),
           });
-          return NextResponse.json({
-            ok: true,
-            status: resolved.status,
-            linked: resolved.status === "active" && resolved.linked,
-          });
+          return NextResponse.json({ ok: true, linked: resolved.linked, created: resolved.created });
         }
 
         const normalizedEmail = email.trim().toLowerCase();
@@ -136,11 +115,12 @@ export async function POST(request: NextRequest) {
         // Keep the profile (it is referenced by finance rows); just drop the link.
         const clerkUserId = event.data.id;
         if (clerkUserId) {
-          const { error } = await supabaseAdmin
-            .from("users")
-            .update({ clerk_user_id: null })
-            .eq("clerk_user_id", clerkUserId);
-          if (error) throw error;
+          const [usersRes, pnmsRes] = await Promise.all([
+            supabaseAdmin.from("users").update({ clerk_user_id: null }).eq("clerk_user_id", clerkUserId),
+            supabaseAdmin.from("pnms").update({ clerk_user_id: null }).eq("clerk_user_id", clerkUserId),
+          ]);
+          if (usersRes.error) throw usersRes.error;
+          if (pnmsRes.error) throw pnmsRes.error;
         }
         return NextResponse.json({ ok: true });
       }

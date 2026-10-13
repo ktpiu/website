@@ -1,6 +1,6 @@
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { AlertTriangle, Clock, Mail, LogIn, ShieldX } from 'lucide-react'
+import { AlertTriangle, Mail, LogIn, ShieldX } from 'lucide-react'
 import Link from 'next/link'
 import { SignOutButton } from '@clerk/nextjs'
 import type { AuthStatus } from '@/lib/auth-store'
@@ -11,20 +11,6 @@ interface UnauthorizedProps {
 }
 
 const COPY = {
-  pending: {
-    Icon: Clock,
-    tone: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
-    title: 'Approval Pending',
-    description: 'Your account has been created and is waiting for an administrator to approve it.',
-    body: "You'll be able to use the member portal as soon as an executive board member approves your account. This usually happens within a day or two. Check back later, or reach out if it's urgent.",
-  },
-  denied: {
-    Icon: ShieldX,
-    tone: 'bg-destructive/10 text-destructive',
-    title: 'Access Not Approved',
-    description: 'An administrator has declined portal access for this account.',
-    body: 'The member portal is only available to current KTP members and alumni. If you believe this was a mistake, contact an administrator or try signing in with a different account.',
-  },
   disaffiliated: {
     Icon: ShieldX,
     tone: 'bg-destructive/10 text-destructive',
@@ -50,7 +36,7 @@ const COPY = {
 
 export function Unauthorized({ message, status }: UnauthorizedProps) {
   const variant =
-    status === 'pending' || status === 'denied' || status === 'disaffiliated'
+    status === 'disaffiliated'
       ? status
       : message
         ? 'error'
@@ -78,7 +64,7 @@ export function Unauthorized({ message, status }: UnauthorizedProps) {
             <SignOutButton>
               <Button variant="outline" className="w-full">
                 <LogIn className="w-4 h-4 mr-2" />
-                {variant === 'pending' ? 'Sign Out' : 'Try Different Account'}
+                Try Different Account
               </Button>
             </SignOutButton>
             <Button asChild className="w-full">

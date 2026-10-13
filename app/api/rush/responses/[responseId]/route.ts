@@ -33,7 +33,7 @@ export async function PATCH(request: Request, { params }: Params) {
     const { template, answers } = await validateResponse(row.template_id, body.answers);
     const participants =
       template.submission_mode === "multiple"
-        ? await validateParticipants(template, body.participants, context.appUser.id)
+        ? await validateParticipants(template, body.participants)
         : [];
     const { error } = await supabaseAdmin
       .from("rush_form_responses")

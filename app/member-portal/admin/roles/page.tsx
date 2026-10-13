@@ -273,7 +273,7 @@ export default function AdminRolesPage() {
   const handleSaveDraft = async () => {
     setIsSaving(true);
     try {
-      await persistRoleDrafts({
+      const { activated } = await persistRoleDrafts({
         baseRoles,
         draftRoles,
         baseRolePermissions,
@@ -281,7 +281,11 @@ export default function AdminRolesPage() {
         permissionIdByKey,
       });
 
-      toast.success("Roles updated.");
+      toast.success(
+        activated > 0
+          ? `Roles updated. ${activated} pledge${activated === 1 ? "" : "s"} moved to active.`
+          : "Roles updated.",
+      );
       await loadData();
     } catch (error) {
       console.error("Failed to save role changes:", error);

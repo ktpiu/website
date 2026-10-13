@@ -13,8 +13,7 @@ export async function GET() {
     const { data, error } = await supabaseAdmin
       .from("users")
       .select("id, name, email, avatar")
-      .eq("is_disaffiliated", false)
-      .eq("is_alumni", false)
+      .eq("account_status", "active")
       .order("name");
     if (error) throw error;
     return NextResponse.json({ members: data ?? [] });

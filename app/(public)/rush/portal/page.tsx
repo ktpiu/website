@@ -1,12 +1,14 @@
 "use client";
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { SignOutButton } from "@clerk/nextjs";
 import { toast } from "sonner";
-import { CheckCircle2, ClipboardCheck, Heart, LogOut } from "lucide-react";
+import { CheckCircle2, ClipboardCheck, Heart, LogOut, UserPlus } from "lucide-react";
+import { Label } from "@/components/ui/label";
+import { NativeSelect } from "@/components/rush/native-select";
 import { QueryProvider } from "@/components/query-provider";
 import { Toaster } from "@/components/ui/sonner";
 import { Badge } from "@/components/ui/badge";
@@ -45,6 +47,8 @@ type PortalEvent = {
   isClosed: boolean;
   attended: boolean;
   hasTimeslots: boolean;
+  /** The rush this event belongs to has concluded: nothing can change. */
+  concluded: boolean;
   selfChangeMode: "cutoff" | "admin_only";
   changeCutoffMinutes: number;
   slotGrid: "time_rows" | "location_rows";
@@ -52,7 +56,24 @@ type PortalEvent = {
   slots: PortalSlot[];
 };
 
+type Registration = {
+  open: boolean;
+  cycleLabel: string | null;
+  registered: boolean;
+  graduationYears: number[];
+};
+
+type UnregisteredData = {
+  kind: "unregistered";
+  account: { name: string; email: string; graduationYear: number | null; status: string };
+  registration: Registration;
+};
+
+type PortalResponse = { kind: "member" } | UnregisteredData | PortalData;
+
 type PortalData = {
+  kind: "pnm";
+  registration: Registration;
   pnm: { name: string; email: string; status: PnmStatus; isIuEmail: boolean; photoUrl: string | null };
   attendance: Array<{ eventId: string; title: string; startsAt: string }>;
   applications: Array<{ cycleLabel: string; submittedAt: string }>;
@@ -116,7 +137,7 @@ function SlotPicker({ event }: { event: PortalEvent }) {
     onSettled: () => queryClient.invalidateQueries({ queryKey: QUERY_KEY }),
   });
 
-  const locked = Boolean(event.mySignup && !event.mySignup.canChange);
+  const locked = event.concluded || Boolean(event.mySignup && !event.mySignup.canChange);
   const busy = book.isPending || cancel.isPending;
 
   return (
@@ -160,8 +181,104 @@ function SlotPicker({ event }: { event: PortalEvent }) {
         }}
       />
       <p className="text-xs text-muted-foreground">
-        {locked ? "Your timeslot is locked in. Contact a rush director if you need to change it." : policyText(event)}
+        {event.concluded
+          ? "This rush has concluded, so timeslots can't be changed."
+          : locked
+            ? "Your timeslot is locked in. Contact a rush director if you need to change it."
+            : policyText(event)}
       </p>
+    </div>
+  );
+}
+
+function RegisterCard({
+  registration,
+  graduationYear,
+}: {
+  registration: Registration;
+  graduationYear: number | null;
+}) {
+  const queryClient = useQueryClient();
+  const [year, setYear] = useState(
+    graduationYear && registration.graduationYears.includes(graduationYear) ? String(graduationYear) : "",
+  );
+  const register = useMutation({
+    mutationFn: () => rushFetch("/api/rush/portal/register", { method: "POST", json: { graduationYear: Number(year) } }),
+    onError: (error) => toast.error(errorMessage(error)),
+    onSuccess: () => toast.success(`You're registered for ${registration.cycleLabel ?? "rush"}.`),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: QUERY_KEY }),
+  });
+  const [freshman, sophomore] = registration.graduationYears;
+
+  return (
+    <Card className="border-primary/30">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <UserPlus className="h-5 w-5 text-primary" /> Rushing {registration.cycleLabel ?? "this semester"}?
+        </CardTitle>
+        <CardDescription>
+          Freshmen and sophomores can register here. Everyone else is registered when they check in at an open rush
+          event or{" "}
+          <Link href="/rush/apply" className="underline underline-offset-2">
+            apply
+          </Link>
+          .
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-wrap items-end gap-3">
+        <div className="space-y-1.5">
+          <Label htmlFor="rush-grad-year">Graduation year</Label>
+          <NativeSelect id="rush-grad-year" className="w-56" value={year} onChange={(e) => setYear(e.target.value)}>
+            <option value="">Select…</option>
+            <option value={freshman}>{freshman} (freshman)</option>
+            <option value={sophomore}>{sophomore} (sophomore)</option>
+          </NativeSelect>
+        </div>
+        <Button disabled={!year || register.isPending} onClick={() => register.mutate()}>
+          I&apos;m rushing
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
+function Unregistered({ data }: { data: UnregisteredData }) {
+  const { account, registration } = data;
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardContent className="flex flex-wrap items-center gap-4 pt-6">
+          <PnmAvatar name={account.name} src={null} className="h-16 w-16" />
+          <div className="min-w-0 flex-1">
+            <h1 className="text-2xl font-bold">Hi, {account.name.split(" ")[0]}</h1>
+            <p className="truncate text-sm text-muted-foreground">{account.email}</p>
+          </div>
+          <SignOutButton redirectUrl="/rush">
+            <Button variant="ghost" size="sm">
+              <LogOut className="mr-1.5 h-4 w-4" /> Sign out
+            </Button>
+          </SignOutButton>
+        </CardContent>
+      </Card>
+      {registration.open ? (
+        <RegisterCard registration={registration} graduationYear={account.graduationYear} />
+      ) : (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">You&apos;re not registered for rush</CardTitle>
+            <CardDescription>
+              {registration.cycleLabel
+                ? "Registration through the portal is closed right now. Check in at a rush event to get started."
+                : "Rush isn't running right now. Check back next semester."}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button asChild variant="outline" size="sm">
+              <Link href="/rush">See rush info</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
@@ -170,23 +287,24 @@ function Portal() {
   const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: QUERY_KEY,
-    queryFn: () => rushFetch<PortalData>("/api/rush/portal/me"),
+    queryFn: () => rushFetch<PortalResponse>("/api/rush/portal/me"),
     placeholderData: keepPreviousData,
     retry: (count, error) => !(error instanceof ApiError && error.status === 403) && count < 1,
   });
 
-  // Rush and member accounts share one sign-in. A non-rush account that lands
-  // here (e.g. a member who used the rush portal link) belongs in the member portal.
+  // Members and rush candidates share one sign-in. A member-portal account
+  // that lands here (e.g. a member who used the rush portal link) belongs there.
   const router = useRouter();
-  const notPnm = query.error instanceof ApiError && query.error.status === 403;
+  const isMember = query.data?.kind === "member";
   useEffect(() => {
-    if (notPnm) router.replace("/member-portal");
-  }, [notPnm, router]);
+    if (isMember) router.replace("/member-portal");
+  }, [isMember, router]);
 
-  const slotEventIds = (query.data?.events ?? []).filter((e) => e.hasTimeslots).map((e) => e.id);
+  const portal = query.data?.kind === "pnm" ? query.data : null;
+  const slotEventIds = (portal?.events ?? []).filter((e) => e.hasTimeslots).map((e) => e.id);
   useSlotBroadcasts(slotEventIds, () => queryClient.invalidateQueries({ queryKey: QUERY_KEY }));
 
-  if (query.isPending || notPnm) {
+  if (query.isPending || isMember) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-24 rounded-xl" />
@@ -211,7 +329,12 @@ function Portal() {
     );
   }
 
-  const { pnm, events, attendance, applications } = query.data;
+  if (query.data.kind === "unregistered") {
+    return <Unregistered data={query.data} />;
+  }
+  if (!portal) return null;
+
+  const { pnm, events, attendance, applications, registration } = portal;
   const isFormer = pnm.status === "former";
 
   return (
@@ -233,6 +356,10 @@ function Portal() {
           </div>
         </CardContent>
       </Card>
+
+      {isFormer && registration.open && !registration.registered ? (
+        <RegisterCard registration={registration} graduationYear={null} />
+      ) : null}
 
       {isFormer ? (
         <Card className="border-primary/30 bg-primary/5">

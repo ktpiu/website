@@ -17,13 +17,13 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
   const { isAuthorized, isLoading, authError, authStatus } = useAuthStore();
   const router = useRouter();
 
-  // Rush candidates have their own portal.
+  // Public and rushee accounts use the rush portal.
   useEffect(() => {
-    if (authStatus === "pnm") router.replace("/rush/portal");
+    if (authStatus === "rush") router.replace("/rush/portal");
   }, [authStatus, router]);
 
-  // Show loading while Clerk loads (and while a PNM is being redirected)
-  if (!clerkLoaded || isLoading || authStatus === "pnm") {
+  // Show loading while Clerk loads (and while a rush account is redirected)
+  if (!clerkLoaded || isLoading || authStatus === "rush") {
     return (
       <div className="min-h-screen min-w-screen flex items-center justify-center">
         <div className="text-center space-y-4">
@@ -39,7 +39,7 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
     return <RedirectToSignIn />;
   }
 
-  // Pending approval, denied, or a setup failure.
+  // Disaffiliated, or a setup failure.
   if (!isAuthorized) {
     return <Unauthorized message={authError} status={authStatus} />;
   }

@@ -16,7 +16,6 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { useAuthStore } from "@/lib/auth-store";
-import { supabase } from "@/lib/supabase";
 import BalanceBar from "@/components/member-portal/finance/BalanceBar";
 import ManagePaymentMethods from "@/components/member-portal/finance/ManagePaymentMethods";
 import Ledger, { LedgerEntry } from "@/components/member-portal/finance/Ledger";
@@ -363,21 +362,11 @@ export default function StripeDuesPage() {
 
       const response = await fetch("/api/stripe/customer/create", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: appUser.name, email: appUser.email }),
       });
 
       const result = await response.json();
       if (!response.ok || !result.id) {
         throw new Error(result.error || "Failed to create customer");
-      }
-
-      const { error: upsertError } = await supabase
-        .from("customers")
-        .upsert({ user_id: appUser.id, stripe_id: result.id });
-
-      if (upsertError) {
-        throw upsertError;
       }
 
       toast.success("Finance portal enabled.");

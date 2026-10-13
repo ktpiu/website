@@ -3,7 +3,6 @@
 import { useMemo, useState } from "react";
 import { Check, ChevronsUpDown, X } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -160,22 +159,26 @@ export function PeopleSelector({
       </Popover>
 
       {multiple && selected.length > 0 ? (
-        <div className="flex flex-wrap gap-1.5">
+        <ul className="divide-y rounded-md border">
           {selected.map((person) => (
-            <Badge key={person.key} variant="secondary" className="gap-1 pr-1">
-              {person.name}
+            <li key={person.key} className="flex items-center gap-2 px-2 py-1.5 text-sm">
+              <PersonAvatar person={person} />
+              <span className="flex-1 truncate">{person.name}</span>
+              {showKinds && person.kind ? (
+                <span className="text-[10px] uppercase text-muted-foreground">{person.kind}</span>
+              ) : null}
               <button
                 type="button"
                 disabled={disabled}
                 onClick={() => toggle(person.key)}
-                className="rounded-full p-0.5 hover:bg-background/60"
+                className="rounded-full p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
                 aria-label={`Remove ${person.name}`}
               >
-                <X className="h-3 w-3" />
+                <X className="h-3.5 w-3.5" />
               </button>
-            </Badge>
+            </li>
           ))}
-        </div>
+        </ul>
       ) : null}
     </div>
   );

@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { normalizeEmail } from "@/lib/app-user";
 import {
+  assertCycleNotConcluded,
   clientIp,
+  getCyclePhases,
   ensureCycleEntry,
   findOrCreatePnm,
   findPnmByEmail,
@@ -37,7 +39,11 @@ type EventRow = {
   qr_checkin_enabled: boolean;
 };
 
-/** The signed-in active member, or null (signed out, PNM, or not approved). */
+/**
+ * The signed-in member with portal access (active or alumni), or null.
+ * Pledges have no portal access, so they check in like any PNM and the page
+ * never reveals that they accepted a bid.
+ */
 async function getOptionalMember() {
   try {
     return (await requireAppAuthContext()).appUser;
@@ -62,7 +68,12 @@ export async function GET(_request: Request, { params }: Params) {
   try {
     const { token } = await params;
     const event = await loadEvent(token);
-    const [pnm, member] = await Promise.all([getOptionalPnm(), getOptionalMember()]);
+    const [pnm, member, phases] = await Promise.all([
+      getOptionalPnm(),
+      getOptionalMember(),
+      getCyclePhases([event.cycle_id]),
+    ]);
+    const concluded = phases.get(event.cycle_id) === "concluded";
     return NextResponse.json({
       member: member ? { name: member.name } : null,
       event: {
@@ -70,7 +81,7 @@ export async function GET(_request: Request, { params }: Params) {
         startsAt: event.starts_at,
         endsAt: event.ends_at,
         locationName: event.location_name,
-        checkinOpen: event.checkin_open && event.attendance_enabled && event.qr_checkin_enabled,
+        checkinOpen: !concluded && event.checkin_open && event.attendance_enabled && event.qr_checkin_enabled,
       },
       prefill: pnm ? { name: pnm.name, email: pnm.email } : null,
     });
@@ -99,6 +110,7 @@ export async function POST(request: Request, { params }: Params) {
     if (!event.checkin_open || !event.attendance_enabled || !event.qr_checkin_enabled) {
       throw new RushError(403, "Check-in for this event is closed.");
     }
+    await assertCycleNotConcluded(event.cycle_id);
 
     // Signed-in actives check themselves in with their account.
     const member = await getOptionalMember();

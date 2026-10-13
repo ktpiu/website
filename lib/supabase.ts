@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import type { AccountStatus } from "@/lib/account-status";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey =
@@ -66,16 +67,22 @@ export interface User {
   title: string;
   /** Expected graduation year; grade is derived from it (see lib/members.ts). */
   graduation_year: number | null;
-  /** Set manually once a member graduates. */
+  /** Lifecycle stage; see lib/account-status.ts. Changed only through the API. */
+  account_status: AccountStatus;
+  /** "auto" follows the members-page rules; "shown"/"hidden" override them. */
+  website_visibility: WebsiteVisibility;
+  /** Derived: account_status = 'alumni'. Read-only. */
   is_alumni: boolean;
-  /** Hidden from all public pages (members, board). */
+  /** Derived: website_visibility = 'hidden'. Read-only. */
   is_hidden: boolean;
   /** Temporarily inactive (e.g. studying abroad). Admin-facing only. */
   is_inactive: boolean;
-  /** Dropped/disaffiliated: hidden publicly and blocked from the member portal. */
+  /** Derived: account_status is dropped or disaffiliated. Read-only. */
   is_disaffiliated: boolean;
   clerk_user_id?: string | null;
 }
+
+export type WebsiteVisibility = "auto" | "shown" | "hidden";
 
 export interface Announcement {
   id: string;

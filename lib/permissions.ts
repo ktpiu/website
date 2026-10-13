@@ -13,6 +13,8 @@ export const RUSH_MANAGE = "rush.manage";
 export const RUSH_DELIBERATION_MANAGE = "rush.deliberation.manage";
 export const RUSH_FORMS_MANAGE = "rush.forms.manage";
 export const RUSH_ATTENDANCE_VIEW_ACTIVES = "rush.attendance.view_actives";
+export const USERS_RUSH_MANAGE = "users.rush.manage";
+export const USERS_ACTIVATE = "users.activate";
 
 type RolePermissionRowLike = {
   role_id?: string | null;

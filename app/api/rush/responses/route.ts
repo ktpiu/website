@@ -80,7 +80,7 @@ export async function POST(request: Request) {
     }
 
     const eventId = await validateEventLink(template, cycleId, str(body.eventId, 64) || null);
-    const participants = await validateParticipants(template, body.participants, context.appUser.id);
+    const participants = await validateParticipants(template, body.participants);
 
     const { data, error } = await supabaseAdmin
       .from("rush_form_responses")

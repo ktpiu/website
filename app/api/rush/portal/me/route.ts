@@ -1,21 +1,56 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
-import { requirePnmAuthContext } from "@/lib/rush/pnm-auth";
+import { getRushAccount } from "@/lib/rush/pnm-auth";
+import { getRegistrationState } from "@/lib/rush/registration";
 import { loadVisibleEventsForPnm, canSelfChange } from "@/lib/rush/portal";
-import { rushErrorResponse, signRushPaths } from "@/lib/rush/server";
+import { getCyclePhases, rushErrorResponse, signRushPaths, type PnmRow } from "@/lib/rush/server";
 import type { RushSlotRecord } from "@/lib/rush/types";
 
 export const dynamic = "force-dynamic";
 
+/** Never reveal an accepted bid in the portal; a pledge still reads as closed rush. */
+function hideBid(status: PnmRow["status"]): PnmRow["status"] {
+  return status === "pledge" ? "closed" : status;
+}
+
 /**
- * Everything the PNM portal shows. Timeslots only expose PNM capacity and the
- * PNM's own booking: active-member signups never leave the server here.
+ * Everything the rush portal shows. Accounts that haven't registered for rush
+ * get `kind: "unregistered"` plus whether they can register themselves;
+ * member-portal accounts get `kind: "member"`. Timeslots only expose PNM
+ * capacity and the PNM's own booking: active-member signups never leave the
+ * server here.
  */
 export async function GET() {
   try {
-    const { pnm } = await requirePnmAuthContext();
+    const { account, pnm, portalAccess } = await getRushAccount();
+    const noStore = { headers: { "Cache-Control": "no-store" } };
+    // Pledges get the member portal once they're initiated (status active).
+    // Until then they keep seeing their rush portal exactly as before: bids
+    // are delivered by PFC, not the portal (see hideBid below).
+    if (portalAccess) {
+      return NextResponse.json({ kind: "member" }, noStore);
+    }
+    const registration = await getRegistrationState(account, pnm);
+    if (!pnm) {
+      return NextResponse.json(
+        {
+          kind: "unregistered",
+          account: {
+            name: account.name,
+            email: account.email,
+            graduationYear: account.graduation_year,
+            status: account.account_status,
+          },
+          registration,
+        },
+        noStore,
+      );
+    }
     const events = await loadVisibleEventsForPnm(pnm);
     const slotEventIds = events.filter((e) => e.has_timeslots).map((e) => e.id);
+
+    const phases = await getCyclePhases(events.map((e) => e.cycle_id));
+    const isConcluded = (event: { cycle_id: string }) => phases.get(event.cycle_id) === "concluded";
 
     const [attendanceRes, applicationsRes, slotsRes, pnmSignupsRes, mySignupsRes, urls] = await Promise.all([
       supabaseAdmin
@@ -58,10 +93,12 @@ export async function GET() {
 
     return NextResponse.json(
       {
+        kind: "pnm",
+        registration,
         pnm: {
           name: pnm.name,
           email: pnm.email,
-          status: pnm.status,
+          status: hideBid(pnm.status),
           isIuEmail: pnm.is_iu_email,
           photoUrl: pnm.photo_path ? urls.get(pnm.photo_path) ?? null : null,
         },
@@ -89,10 +126,18 @@ export async function GET() {
             isClosed: event.visibility === "pnm_portal",
             attended: attended.has(event.id),
             hasTimeslots: event.has_timeslots,
+            // Rush is over: the portal shows the event but nothing can change.
+            concluded: isConcluded(event),
             selfChangeMode: event.self_change_mode,
             changeCutoffMinutes: event.change_cutoff_minutes,
             slotGrid: event.slot_grid,
-            mySignup: mine ? { id: mine.id, slotId: mine.slot_id, canChange: mySlot ? canSelfChange(event, mySlot) : false } : null,
+            mySignup: mine
+              ? {
+                  id: mine.id,
+                  slotId: mine.slot_id,
+                  canChange: !isConcluded(event) && mySlot ? canSelfChange(event, mySlot) : false,
+                }
+              : null,
             slots: event.has_timeslots
               ? slots
                   .filter((s) => s.event_id === event.id)
