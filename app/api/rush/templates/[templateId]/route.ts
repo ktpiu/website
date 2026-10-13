@@ -19,7 +19,12 @@ export async function PATCH(request: Request, { params }: Params) {
 
     const { data, error } = await supabaseAdmin
       .from("rush_form_templates")
-      .update({ ...template, updated_at: new Date().toISOString() })
+      .update({
+        ...template,
+        // A disabled, cycle-only or evaluation form can't stay the default.
+        ...(template.kind !== "application" || template.cycle_id || !template.is_active ? { is_default: false } : {}),
+        updated_at: new Date().toISOString(),
+      })
       .eq("id", templateId)
       .select("*")
       .maybeSingle();
@@ -47,7 +52,7 @@ export async function DELETE(_request: Request, { params }: Params) {
     if ((count ?? 0) > 0) {
       const { error } = await supabaseAdmin
         .from("rush_form_templates")
-        .update({ is_active: false })
+        .update({ is_active: false, is_default: false })
         .eq("id", templateId);
       if (error) throw error;
       return NextResponse.json({ archived: true });

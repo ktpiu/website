@@ -79,6 +79,7 @@ export default function RushSettingsPage() {
 
   const applicationTemplates = (templates.data ?? []).filter((t) => t.kind === "application");
   const evaluationTemplates = (templates.data ?? []).filter((t) => t.kind === "evaluation");
+  const defaultApplication = applicationTemplates.find((t) => t.is_default);
 
   const saveTemplate = async () => {
     if (!editing) return;
@@ -161,7 +162,9 @@ export default function RushSettingsPage() {
                         }
                         aria-label="Application form"
                       >
-                        <option value="">Default application</option>
+                        <option value="">
+                          {defaultApplication ? `Default (${defaultApplication.name})` : "Default application"}
+                        </option>
                         {applicationTemplates.map((t) => (
                           <option key={t.id} value={t.id}>
                             {t.name}
@@ -241,6 +244,21 @@ export default function RushSettingsPage() {
                   {t.submission_mode === "multiple" ? <Badge variant="secondary">Multi-person</Badge> : null}
                   {!t.is_active ? <Badge variant="outline">Disabled</Badge> : null}
                   {t.hide_author_in_deliberation ? <Badge variant="secondary">Anonymous</Badge> : null}
+                  {t.kind === "application" && !t.cycle_id ? (
+                    t.is_default ? (
+                      <Badge>Default</Badge>
+                    ) : t.is_active ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          run(() => rushFetch(`/api/rush/templates/${t.id}/default`, { method: "POST" }), `${t.name} is now the default application.`)
+                        }
+                      >
+                        Make default
+                      </Button>
+                    ) : null
+                  ) : null}
                   <Button
                     variant="ghost"
                     size="icon"

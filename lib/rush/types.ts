@@ -63,6 +63,7 @@ export type RushFormTemplate = {
   participant_roles: ParticipantRole[];
   sort_order: number;
   cycle_id: string | null;
+  is_default: boolean;
 };
 
 /** People answers are stored as "user:<id>" / "pnm:<id>" strings. */

@@ -149,9 +149,15 @@ export function toTemplate(row: Record<string, unknown>): RushFormTemplate {
 
 export async function getApplicationTemplate(cycle: RushCycle) {
   let query = supabaseAdmin.from("rush_form_templates").select("*").eq("kind", "application");
+  // Falls back to the chosen default, then the first active global form.
   query = cycle.application_template_id
     ? query.eq("id", cycle.application_template_id)
-    : query.is("cycle_id", null).eq("is_active", true).order("sort_order").limit(1);
+    : query
+        .is("cycle_id", null)
+        .eq("is_active", true)
+        .order("is_default", { ascending: false })
+        .order("sort_order")
+        .limit(1);
   const { data, error } = await query;
   if (error) throw error;
   const row = (data ?? [])[0];
