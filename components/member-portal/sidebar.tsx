@@ -21,7 +21,6 @@ import {
   CalendarRange,
   ClipboardPen,
   Gavel,
-  CalendarCog,
   Settings2,
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -166,7 +165,12 @@ export function MemberPortalSidebar() {
   const showRushGroup =
     rushNav.data?.cyclePhase !== "concluded" || canManageRushForms(permissions);
   const rushItems = [
-    { icon: CalendarRange, label: "Schedule", href: "/member-portal/rush/schedule" },
+    {
+      icon: CalendarRange,
+      label: "Events",
+      href: "/member-portal/rush/events",
+      badge: rushManage && rushNav.data?.unmatchedPending ? String(rushNav.data.unmatchedPending) : null,
+    },
     { icon: ClipboardPen, label: "PNM Forms", href: "/member-portal/rush/forms" },
     {
       icon: Gavel,
@@ -176,12 +180,6 @@ export function MemberPortalSidebar() {
     },
     ...(rushManage
       ? [
-          {
-            icon: CalendarCog,
-            label: "Events & Check-in",
-            href: "/member-portal/rush/events",
-            badge: rushNav.data?.unmatchedPending ? String(rushNav.data.unmatchedPending) : null,
-          },
           { icon: Settings2, label: "Rush Settings", href: "/member-portal/rush/settings" },
         ]
       : []),

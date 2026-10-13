@@ -23,7 +23,7 @@ import { PnmAvatar } from "@/components/rush/pnm-avatar";
 import { SlotGrid } from "@/components/rush/slot-grid";
 import { AttendanceChip } from "@/components/rush/attendance-mark";
 import type { AttendanceStatus } from "@/lib/rush/types";
-import { AccessRequired } from "@/components/member-portal/rush/shared";
+import { RushEventOverview } from "@/components/member-portal/rush/event-overview";
 import { EventForm, eventToForm, formToPayload, type EventFormValues } from "@/components/member-portal/rush/event-form";
 import type { MemberEvent, MemberSlot } from "@/components/member-portal/rush/types";
 import { useSlotBroadcasts } from "@/hooks/use-rush-realtime";
@@ -106,7 +106,23 @@ export default function RushEventDetailPage({ params }: { params: Promise<{ even
     if (eventQuery.data && !form) setForm(eventToForm(eventQuery.data));
   }, [eventQuery.data, form]);
 
-  if (!canManage) return <AccessRequired what="manage rush events" />;
+  const backLink = (
+    <Button asChild variant="ghost" size="sm" className="-ml-2 mt-1">
+      <Link href="/member-portal/rush/events">
+        <ArrowLeft className="mr-1 h-4 w-4" /> All events
+      </Link>
+    </Button>
+  );
+
+  // Actives without rush management just see the event and sign up for timeslots.
+  if (!canManage) {
+    return (
+      <div className="mx-auto max-w-5xl space-y-4">
+        {backLink}
+        <RushEventOverview eventId={eventId} />
+      </div>
+    );
+  }
   if (eventQuery.isPending || !form) {
     return (
       <div className="mx-auto max-w-5xl space-y-4 pt-2">
@@ -235,11 +251,7 @@ export default function RushEventDetailPage({ params }: { params: Promise<{ even
 
   return (
     <div className={cn("mx-auto space-y-4 pb-10", tab === "slots" ? "max-w-none" : "max-w-5xl")}>
-      <Button asChild variant="ghost" size="sm" className="-ml-2 mt-1">
-        <Link href="/member-portal/rush/events">
-          <ArrowLeft className="mr-1 h-4 w-4" /> All events
-        </Link>
-      </Button>
+      {backLink}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">{event.title}</h1>
@@ -253,8 +265,9 @@ export default function RushEventDetailPage({ params }: { params: Promise<{ even
         </Button>
       </div>
 
-      <Tabs value={tab ?? (event.attendanceEnabled ? "checkin" : "attendance")} onValueChange={setTab}>
+      <Tabs value={tab ?? "overview"} onValueChange={setTab}>
         <TabsList className="flex-wrap">
+          <TabsTrigger value="overview">Overview</TabsTrigger>
           {event.attendanceEnabled ? <TabsTrigger value="checkin">Check-in</TabsTrigger> : null}
           <TabsTrigger value="attendance">
             Attendance ({presentCount})
@@ -265,6 +278,10 @@ export default function RushEventDetailPage({ params }: { params: Promise<{ even
           {event.hasTimeslots ? <TabsTrigger value="slots">Timeslots ({event.slots.filter((slot) => !isUnallocated(slot)).length})</TabsTrigger> : null}
           <TabsTrigger value="details">Details</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="overview" className="pt-4">
+          <RushEventOverview eventId={event.id} />
+        </TabsContent>
 
         {event.attendanceEnabled ? <TabsContent value="checkin" className="pt-4">
           <Card>
