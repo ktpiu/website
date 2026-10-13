@@ -102,7 +102,7 @@ export default function RushEventsAdminPage() {
               </div>
               <div className="flex flex-wrap items-center gap-1.5">
                 {event.visibility === "pnm_portal" ? <Badge variant="secondary">Closed</Badge> : <Badge variant="outline">Public</Badge>}
-                {event.hasTimeslots ? <Badge variant="outline">{event.slots.length} slots</Badge> : null}
+                {event.hasTimeslots ? <Badge variant="outline">{event.slots.filter((s) => s.pnmCapacity > 0 || s.activeCapacity > 0 || s.pnms.length > 0 || s.actives.length > 0).length} slots</Badge> : null}
                 {event.checkinOpen ? (
                   <Badge className="gap-1 bg-emerald-600 text-white">
                     <QrCode className="h-3 w-3" /> Check-in open

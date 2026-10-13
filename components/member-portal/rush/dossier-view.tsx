@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, CheckCircle2, CircleAlert, Clock, UserCheck, UserX } from "lucide-react";
+import { AlertTriangle, CheckCircle2, CircleAlert, Clock, FileText, UserCheck, UserX } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AnswerList } from "@/components/rush/forms/form-renderer";
@@ -17,6 +17,7 @@ export type DossierApplication = {
   isIuEmail: boolean;
   fields: RushFormField[];
   answers: RushAnswers;
+  resumeUrl: string | null;
 };
 export type DossierResponses = Array<{
   templateId: string;
@@ -195,6 +196,16 @@ export function ApplicationsCard({ applications }: { applications: DossierApplic
                 <p className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
                   <AlertTriangle className="h-3.5 w-3.5" /> Applied with a non-IU email
                 </p>
+              ) : null}
+              {app.resumeUrl ? (
+                <a
+                  href={app.resumeUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+                >
+                  <FileText className="h-4 w-4" /> View resume
+                </a>
               ) : null}
               <AnswerList fields={app.fields} answers={app.answers} />
             </div>

@@ -3,7 +3,7 @@
 /* eslint-disable @next/next/no-img-element -- local object URL preview */
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Camera, CheckCircle2, Loader2, MailCheck } from "lucide-react";
+import { Camera, CheckCircle2, FileText, Loader2, MailCheck, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -13,13 +13,14 @@ import { FormRenderer } from "@/components/rush/forms/form-renderer";
 import { IuEmailWarning } from "@/components/rush/iu-email-warning";
 import { AVATAR_ACCEPT, validateAvatarFile } from "@/lib/avatar-upload";
 import { ApiError, errorMessage, rushFetch } from "@/lib/rush/client";
+import { RESUME_ACCEPT, validateResumeFile } from "@/lib/rush/resume-upload";
 import { validateAnswers, type RushAnswers, type RushFormField } from "@/lib/rush/types";
 
 type ApplicationInfo = {
   open: boolean;
   cycleLabel: string | null;
   template: { name: string; description: string; fields: RushFormField[] } | null;
-  prefill: { name: string; email: string } | null;
+  prefill: { name: string; email: string; hasResume: boolean } | null;
   draft: { name: string; answers: RushAnswers; updatedAt: string } | null;
 };
 
@@ -38,6 +39,8 @@ export default function ApplyPage() {
   const [result, setResult] = useState<{ hasAccount: boolean } | null>(null);
   const [resent, setResent] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const [resume, setResume] = useState<File | null>(null);
+  const resumeInput = useRef<HTMLInputElement>(null);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [savingDraft, setSavingDraft] = useState(false);
   const loadedDraft = useRef(false);
@@ -110,6 +113,17 @@ export default function ApplyPage() {
     setPickedFile(file);
   };
 
+  const pickResume = (file: File | undefined) => {
+    if (!file) return;
+    const problem = validateResumeFile(file);
+    if (problem) {
+      setError(problem);
+      return;
+    }
+    setError(null);
+    setResume(file);
+  };
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!info?.template) return;
@@ -133,6 +147,7 @@ export default function ApplyPage() {
       form.set("website", website);
       form.set("answers", JSON.stringify(answers));
       form.set("photo", photo);
+      if (resume) form.set("resume", resume);
       const data = await rushFetch<{ hasAccount: boolean }>("/api/rush/apply", { method: "POST", body: form });
       setResult(data);
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -267,6 +282,39 @@ export default function ApplyPage() {
                 </div>
                 <IuEmailWarning email={email} />
 
+                <div className="space-y-2">
+                  <Label htmlFor="resume">Resume</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Optional. PDF, up to 3MB.
+                    {!resume && info.prefill?.hasResume ? " We already have a resume on file; upload a new one to replace it." : ""}
+                  </p>
+                  {resume ? (
+                    <div className="flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm">
+                      <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <span className="min-w-0 flex-1 truncate">{resume.name}</span>
+                      <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => setResume(null)} aria-label="Remove resume">
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button type="button" variant="outline" size="sm" onClick={() => resumeInput.current?.click()}>
+                      <FileText className="mr-2 h-4 w-4" />
+                      {info.prefill?.hasResume ? "Replace resume" : "Upload resume"}
+                    </Button>
+                  )}
+                  <input
+                    ref={resumeInput}
+                    id="resume"
+                    type="file"
+                    accept={RESUME_ACCEPT}
+                    className="hidden"
+                    onChange={(e) => {
+                      pickResume(e.target.files?.[0]);
+                      e.target.value = "";
+                    }}
+                  />
+                </div>
+
                 <FormRenderer fields={info.template.fields} values={answers} onChange={setAnswers} errors={fieldErrors} publicMode />
 
                 <input
@@ -295,7 +343,7 @@ export default function ApplyPage() {
                       {savedAt ? (
                         <span className="text-xs text-muted-foreground">
                           Draft saved {new Date(savedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
-                          . Your photo isn&apos;t saved with drafts.
+                          . Your photo and resume aren&apos;t saved with drafts.
                         </span>
                       ) : null}
                     </>

@@ -73,6 +73,8 @@ export type PnmDossier = {
     isIuEmail: boolean;
     fields: RushFormField[];
     answers: RushAnswers;
+    /** Signed link to the resume PDF attached to this application. */
+    resumeUrl: string | null;
   }>;
   responses: Array<{
     templateId: string;
@@ -174,6 +176,7 @@ export async function loadPnmDossier(pnmId: string, options: Options = {}): Prom
     email: string;
     is_iu_email: boolean;
     answers: RushAnswers;
+    resume_path: string | null;
     submitted_at: string;
   }>;
 
@@ -193,14 +196,14 @@ export async function loadPnmDossier(pnmId: string, options: Options = {}): Prom
     ]),
   );
 
-  const [templatesRes, authorsRes, photoUrls, eventsRes, pnmNamesRes] = await Promise.all([
+  const [templatesRes, authorsRes, signedUrls, eventsRes, pnmNamesRes] = await Promise.all([
     templateIds.length
       ? supabaseAdmin.from("rush_form_templates").select("*").in("id", templateIds)
       : Promise.resolve({ data: [], error: null }),
     authorIds.length
       ? supabaseAdmin.from("users").select("id, name").in("id", authorIds)
       : Promise.resolve({ data: [], error: null }),
-    signRushPaths([pnm.photo_path]),
+    signRushPaths([pnm.photo_path, ...applications.map((a) => a.resume_path)]),
     eventIds.length
       ? supabaseAdmin.from("rush_events").select("id, title").in("id", eventIds)
       : Promise.resolve({ data: [], error: null }),
@@ -308,7 +311,7 @@ export async function loadPnmDossier(pnmId: string, options: Options = {}): Prom
       major: pnm.major,
       gradYear: pnm.grad_year,
       status: pnm.status,
-      photoUrl: pnm.photo_path ? photoUrls.get(pnm.photo_path) ?? null : null,
+      photoUrl: pnm.photo_path ? signedUrls.get(pnm.photo_path) ?? null : null,
       hasAccount: Boolean(pnm.clerk_user_id),
       createdAt: pnm.created_at,
     },
@@ -341,6 +344,7 @@ export async function loadPnmDossier(pnmId: string, options: Options = {}): Prom
       isIuEmail: a.is_iu_email,
       fields: (a.template_id && templates.get(a.template_id)?.fields) || [],
       answers: resolveAnswers((a.template_id && templates.get(a.template_id)?.fields) || [], a.answers ?? {}),
+      resumeUrl: a.resume_path ? signedUrls.get(a.resume_path) ?? null : null,
     })),
     responses: Array.from(grouped.values()),
     ...(delibData ?? {}),

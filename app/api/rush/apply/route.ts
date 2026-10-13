@@ -6,15 +6,18 @@ import {
   ensureCycleEntry,
   findOrCreatePnm,
   getActiveCycle,
+  cleanupPnmResume,
   getApplicationTemplate,
   rateLimit,
   replacePnmPhoto,
+  replacePnmResume,
   RushError,
   rushErrorResponse,
   str,
 } from "@/lib/rush/server";
 import { getOptionalPnm } from "@/lib/rush/pnm-auth";
 import { notifyApplicationReceived } from "@/lib/rush/notify";
+import { validateResumeFile } from "@/lib/rush/resume-upload";
 import { looksLikeEmail, sanitizeAnswers, validateAnswers } from "@/lib/rush/types";
 
 export const dynamic = "force-dynamic";
@@ -47,7 +50,7 @@ export async function GET() {
       open: Boolean(open),
       cycleLabel: open?.cycle.label ?? null,
       template: open ? { name: open.template.name, description: open.template.description, fields: open.template.fields } : null,
-      prefill: pnm ? { name: pnm.name, email: pnm.email } : null,
+      prefill: pnm ? { name: pnm.name, email: pnm.email, hasResume: Boolean(pnm.resume_path) } : null,
     });
   } catch (error) {
     return rushErrorResponse(error, "Failed to load the application.");
@@ -90,12 +93,18 @@ export async function POST(request: Request) {
 
     const photo = form.get("photo");
     const photoFile = photo instanceof File && photo.size > 0 ? photo : null;
+    const resume = form.get("resume");
+    const resumeFile = resume instanceof File && resume.size > 0 ? resume : null;
+    const resumeProblem = resumeFile ? validateResumeFile(resumeFile) : null;
+    if (resumeProblem) throw new RushError(400, resumeProblem);
 
     const { pnm } = await findOrCreatePnm({ email, name });
     if (!photoFile && !pnm.photo_path) throw new RushError(400, "Add a headshot photo.");
 
     await ensureCycleEntry(pnm, cycle.id);
     const photoPath = photoFile ? await replacePnmPhoto(pnm, photoFile) : pnm.photo_path;
+    // Optional; reapplying without a new file keeps the resume already on file.
+    const resumePath = resumeFile ? await replacePnmResume(pnm, resumeFile) : pnm.resume_path;
 
     // Copy well-known application answers onto the PNM profile.
     const profile: Record<string, unknown> = { updated_at: new Date().toISOString() };
@@ -115,11 +124,13 @@ export async function POST(request: Request) {
         email,
         answers,
         photo_path: photoPath,
+        resume_path: resumePath,
         submitted_at: new Date().toISOString(),
       },
       { onConflict: "cycle_id,pnm_id" },
     );
     if (error) throw error;
+    if (resumePath !== pnm.resume_path) await cleanupPnmResume(pnm.resume_path);
 
     // The submitted application replaces any saved draft.
     await supabaseAdmin.from("rush_application_drafts").delete().eq("cycle_id", cycle.id).eq("pnm_id", pnm.id);

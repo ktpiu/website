@@ -5,6 +5,7 @@ import { supabaseAdmin } from "@/lib/supabase-admin";
 import { RouteAuthError } from "@/lib/server-auth";
 import { normalizeEmail } from "@/lib/app-user";
 import { AVATAR_ALLOWED_TYPES, validateAvatarFile } from "@/lib/avatar-upload";
+import { validateResumeFile } from "@/lib/rush/resume-upload";
 import { parseFields, parseParticipantRoles, type RushCycle, type RushFormTemplate } from "@/lib/rush/types";
 
 export const RUSH_BUCKET = process.env.SUPABASE_RUSH_BUCKET ?? "rush";
@@ -59,6 +60,7 @@ export function optStr(value: unknown, max = 500): string | null {
 const SLOT_ERRORS: Record<string, [number, string]> = {
   SLOT_FULL: [409, "That timeslot is full."],
   SLOT_STARTED: [409, "That timeslot has already started."],
+  SLOT_OVERLAP: [409, "Already signed up for another timeslot at that time."],
   CHANGES_LOCKED: [403, "Signups for this event can only be changed by rush directors."],
   PAST_CUTOFF: [403, "It's too late to change this signup. Contact a rush director."],
   SLOT_NOT_FOUND: [404, "Timeslot not found."],
@@ -146,6 +148,7 @@ export type PnmRow = {
   major: string | null;
   grad_year: number | null;
   photo_path: string | null;
+  resume_path: string | null;
   status: "open" | "closed" | "pledge" | "former";
   clerk_user_id: string | null;
   linked_user_id: string | null;
@@ -244,7 +247,7 @@ export async function signRushPaths(paths: Array<string | null | undefined>) {
     .from(RUSH_BUCKET)
     .createSignedUrls(unique, SIGNED_URL_SECONDS);
   if (error) {
-    console.error("Failed to sign rush photo URLs:", error);
+    console.error("Failed to sign rush file URLs:", error);
     return urls;
   }
   for (const item of data ?? []) {
@@ -294,6 +297,51 @@ export async function replacePnmPhoto(pnm: PnmRow, file: File) {
   }
   if (pnm.photo_path && pnm.photo_path !== path) await removeRushObject(pnm.photo_path);
   return path;
+}
+
+/**
+ * Stores a new resume PDF for a PNM. The PNM keeps pointing at their latest
+ * upload; the previous file is kept only if an application still uses it.
+ */
+export async function replacePnmResume(pnm: PnmRow, file: File) {
+  const problem = validateResumeFile(file);
+  if (problem) throw new RushError(400, problem);
+
+  // Sniff the PDF header; the browser-reported type is client-controlled.
+  const bytes = Buffer.from(await file.arrayBuffer());
+  if (bytes.subarray(0, 5).toString("latin1") !== "%PDF-") throw new RushError(400, "Resumes must be a PDF.");
+
+  const path = `pnms/${pnm.id}/resume-${Date.now()}-${randomUUID()}.pdf`;
+  const { error: uploadError } = await supabaseAdmin.storage.from(RUSH_BUCKET).upload(path, bytes, {
+    contentType: "application/pdf",
+    cacheControl: "3600",
+    upsert: false,
+  });
+  if (uploadError) throw new Error(uploadError.message || "Failed to upload resume.");
+
+  const { error } = await supabaseAdmin
+    .from("pnms")
+    .update({ resume_path: path, updated_at: new Date().toISOString() })
+    .eq("id", pnm.id);
+  if (error) {
+    await removeRushObject(path);
+    throw error;
+  }
+  return path;
+}
+
+/** Removes a replaced resume unless an application still references it. */
+export async function cleanupPnmResume(previousPath: string | null | undefined) {
+  if (!previousPath) return;
+  const { count, error } = await supabaseAdmin
+    .from("rush_applications")
+    .select("id", { count: "exact", head: true })
+    .eq("resume_path", previousPath);
+  if (error) {
+    console.error("Failed to check resume usage:", error);
+    return;
+  }
+  if (!count) await removeRushObject(previousPath);
 }
 
 // ---------------------------------------------------------------------------

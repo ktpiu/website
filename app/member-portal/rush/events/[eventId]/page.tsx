@@ -262,7 +262,7 @@ export default function RushEventDetailPage({ params }: { params: Promise<{ even
               <Badge className="ml-1.5 bg-amber-500 px-1.5 text-white">{attendance.unmatched.length}</Badge>
             ) : null}
           </TabsTrigger>
-          {event.hasTimeslots ? <TabsTrigger value="slots">Timeslots ({event.slots.length})</TabsTrigger> : null}
+          {event.hasTimeslots ? <TabsTrigger value="slots">Timeslots ({event.slots.filter((slot) => !isUnallocated(slot)).length})</TabsTrigger> : null}
           <TabsTrigger value="details">Details</TabsTrigger>
         </TabsList>
 
