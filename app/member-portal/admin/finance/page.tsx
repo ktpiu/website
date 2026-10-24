@@ -304,7 +304,8 @@ export default function AdminFinancePage() {
                   ? Math.round((charge.paidCents / charge.totalCents) * 100)
                   : 0;
               const late = charge.overdueCount > 0 ? daysOverdue(charge.dueAt) : 0;
-              const paidCount = charge.totalAssigned - charge.unpaidCount;
+              const paidCount =
+                charge.totalAssigned - charge.unpaidCount - charge.pendingCount;
               return (
                 <Link
                   key={charge.id}
@@ -336,8 +337,9 @@ export default function AdminFinancePage() {
                       />
                     </div>
                     <div className="text-[12.5px] text-muted-foreground">
-                      {paidCount} of {charge.totalAssigned} paid · {formatCents(charge.paidCents)}{" "}
-                      of {formatCents(charge.totalCents)}
+                      {paidCount} of {charge.totalAssigned} paid
+                      {charge.pendingCount > 0 && ` · ${charge.pendingCount} pending`} ·{" "}
+                      {formatCents(charge.paidCents)} of {formatCents(charge.totalCents)}
                     </div>
                   </div>
                   <span className="font-semibold md:text-right">

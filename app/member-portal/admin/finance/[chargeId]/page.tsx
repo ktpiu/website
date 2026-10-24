@@ -40,7 +40,9 @@ type Recipient = {
   amountCents: number;
   paidCents: number;
   remainingCents: number;
-  paymentState: "paid" | "partial" | "unpaid" | "exempt";
+  pendingCents: number;
+  payments: Array<{ paidAt: string | null; amountCents: number }>;
+  paymentState: "paid" | "partial" | "pending" | "unpaid" | "exempt";
   isOverdue: boolean;
   isExempt: boolean;
 };
@@ -62,13 +64,14 @@ type ChargeDetail = {
   recipients: Recipient[];
 };
 
-type Filter = "all" | "unpaid" | "partial" | "paid" | "exempt";
+type Filter = "all" | "unpaid" | "pending" | "partial" | "paid" | "exempt";
 
 const PAGE_SIZE = 50;
 
 const badgeClass: Record<Recipient["paymentState"], string> = {
   paid: "bg-emerald-100 text-emerald-900",
   partial: "bg-amber-100 text-amber-950",
+  pending: "bg-blue-100 text-blue-900",
   unpaid: "bg-muted text-foreground/80",
   exempt: "bg-slate-200 text-slate-800",
 };
@@ -150,13 +153,15 @@ export default function FinanceChargeDetailPage() {
       paidCount: count("paid"),
       partialCount: count("partial"),
       unpaidCount: count("unpaid"),
+      pendingCount: count("pending"),
+      pendingCents: recipients.reduce((s, r) => s + r.pendingCents, 0),
       exemptCount: count("exempt"),
       unsettled: recipients.filter((r) => r.remainingCents > 0).length,
     };
   }, [detail]);
 
   const rows = useMemo(() => {
-    const order = { unpaid: 0, partial: 1, paid: 2, exempt: 3 } as const;
+    const order = { unpaid: 0, pending: 1, partial: 2, paid: 3, exempt: 4 } as const;
     return [...(detail?.recipients ?? [])]
       .filter((r) => filter === "all" || r.paymentState === filter)
       .sort(
@@ -310,6 +315,9 @@ export default function FinanceChargeDetailPage() {
   const filters: Array<[Filter, string, number]> = [
     ["all", "All", detail.recipients.length],
     ["unpaid", "Unpaid", summary.unpaidCount],
+    ...(summary.pendingCount > 0
+      ? ([["pending", "Pending", summary.pendingCount]] as Array<[Filter, string, number]>)
+      : []),
     ["partial", "Partial", summary.partialCount],
     ["paid", "Paid", summary.paidCount],
     ...(summary.exemptCount > 0
@@ -407,6 +415,12 @@ export default function FinanceChargeDetailPage() {
               <span className="size-2.5 rounded-[3px] border bg-muted" />
               Unpaid · {summary.unpaidCount}
             </span>
+            {summary.pendingCount > 0 && (
+              <span className="flex items-center gap-1.5">
+                <span className="size-2.5 rounded-[3px] bg-blue-500" />
+                Pending · {summary.pendingCount}
+              </span>
+            )}
           </div>
         </div>
         <div className="space-y-2.5 rounded-xl border p-6">
@@ -416,6 +430,8 @@ export default function FinanceChargeDetailPage() {
           </div>
           <div className="text-[13px] text-muted-foreground">
             {summary.unsettled} member{summary.unsettled === 1 ? "" : "s"}
+            {summary.pendingCents > 0 &&
+              ` · ${formatCents(summary.pendingCents)} processing`}
           </div>
         </div>
       </div>
@@ -450,19 +466,20 @@ export default function FinanceChargeDetailPage() {
         </div>
 
         <div className="overflow-x-auto">
-          <div className="min-w-[960px]">
-            <div className="grid grid-cols-[minmax(0,2.2fr)_100px_100px_100px_110px_240px] gap-4 border-b bg-muted/40 px-5 py-3 text-[12.5px] font-medium text-muted-foreground">
+          <div className="min-w-[1080px]">
+            <div className="grid grid-cols-[minmax(0,2.2fr)_100px_100px_100px_120px_110px_240px] gap-4 border-b bg-muted/40 px-5 py-3 text-[12.5px] font-medium text-muted-foreground">
               <span>Member</span>
               <span className="text-right">Amount</span>
               <span className="text-right">Paid</span>
               <span className="text-right">Remaining</span>
+              <span>Updated at</span>
               <span>Status</span>
               <span />
             </div>
             {pageRows.map((row) => (
               <div
                 key={row.obligationId}
-                className="grid min-h-11 grid-cols-[minmax(0,2.2fr)_100px_100px_100px_110px_240px] items-center gap-4 border-b px-5 py-2.5 last:border-b-0"
+                className="grid min-h-11 grid-cols-[minmax(0,2.2fr)_100px_100px_100px_120px_110px_240px] items-center gap-4 border-b px-5 py-2.5 last:border-b-0"
               >
                 <div className="flex min-w-0 items-center gap-3">
                   <MemberAvatar name={row.name} src={row.avatar} />
@@ -483,6 +500,23 @@ export default function FinanceChargeDetailPage() {
                 <span className="text-right text-sm font-semibold">
                   {formatCents(row.remainingCents)}
                 </span>
+                <div className="text-sm">
+                  {row.payments.length === 0 ? (
+                    <span className="text-muted-foreground">—</span>
+                  ) : (
+                    row.payments.map((payment, index) => (
+                      <div key={index} title={formatCents(payment.amountCents)}>
+                        {formatDate(payment.paidAt, "—")}
+                        {row.payments.length > 1 && (
+                          <span className="text-xs text-muted-foreground">
+                            {" "}
+                            · {formatCents(payment.amountCents)}
+                          </span>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
                 <span
                   className={cn(
                     "justify-self-start rounded-full px-2.5 py-0.5 text-xs font-semibold capitalize",

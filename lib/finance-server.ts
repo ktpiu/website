@@ -359,3 +359,36 @@ export async function updateFinancePaymentStatus(params: {
 
   if (error) throw error;
 }
+
+// Stripe payments still processing (e.g. ACH) haven't been allocated yet;
+// their intended allocations live on the payment row until the webhook completes it.
+export async function loadPendingCentsByObligation() {
+  const { data, error } = await supabase
+    .from("finance_payments")
+    .select("pending_allocations_json")
+    .eq("status", "pending");
+
+  if (error) throw error;
+
+  const pendingByObligationId = new Map<string, number>();
+  for (const row of data ?? []) {
+    const allocations = Array.isArray(row.pending_allocations_json)
+      ? row.pending_allocations_json
+      : [];
+    for (const allocation of allocations) {
+      if (
+        !allocation ||
+        typeof allocation.obligationId !== "string" ||
+        typeof allocation.amountCents !== "number"
+      ) {
+        continue;
+      }
+      pendingByObligationId.set(
+        allocation.obligationId,
+        (pendingByObligationId.get(allocation.obligationId) ?? 0) + allocation.amountCents,
+      );
+    }
+  }
+
+  return pendingByObligationId;
+}

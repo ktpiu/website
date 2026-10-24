@@ -10,6 +10,7 @@ import {
   loadAllBasicRoles,
   loadBasicUsersByIds,
   loadObligationBalancesForCharge,
+  loadPendingCentsByObligation,
 } from "@/lib/finance-server";
 
 type ChargeTargetRow = {
@@ -18,6 +19,55 @@ type ChargeTargetRow = {
   mode: string | null;
   amount_cents: number | null;
 };
+
+// Completed payments toward each obligation, oldest first. The webhook stamps
+// updated_at when a Stripe payment settles; manual payments are completed on insert.
+async function loadCompletedPaymentsByObligation(obligationIds: string[]) {
+  const byObligationId = new Map<string, Array<{ paidAt: string | null; amountCents: number }>>();
+  if (obligationIds.length === 0) return byObligationId;
+
+  const allocationsRes = await supabase
+    .from("finance_payment_allocations")
+    .select("payment_id, obligation_id, amount_cents")
+    .in("obligation_id", obligationIds);
+  if (allocationsRes.error) throw allocationsRes.error;
+
+  const allocations = allocationsRes.data ?? [];
+  const paymentIds = Array.from(new Set(allocations.map((row) => row.payment_id as string)));
+  if (paymentIds.length === 0) return byObligationId;
+
+  const paymentsRes = await supabase
+    .from("finance_payments")
+    .select("id, created_at, updated_at")
+    .in("id", paymentIds)
+    .eq("status", "completed");
+  if (paymentsRes.error) throw paymentsRes.error;
+
+  const paidAtByPaymentId = new Map(
+    (paymentsRes.data ?? []).map((row) => [
+      row.id as string,
+      (typeof row.updated_at === "string" ? row.updated_at : null) ??
+        (typeof row.created_at === "string" ? row.created_at : null),
+    ]),
+  );
+
+  for (const row of allocations) {
+    const paymentId = row.payment_id as string;
+    if (!paidAtByPaymentId.has(paymentId)) continue;
+    const list = byObligationId.get(row.obligation_id as string) ?? [];
+    list.push({
+      paidAt: paidAtByPaymentId.get(paymentId) ?? null,
+      amountCents: typeof row.amount_cents === "number" ? row.amount_cents : 0,
+    });
+    byObligationId.set(row.obligation_id as string, list);
+  }
+
+  for (const list of byObligationId.values()) {
+    list.sort((a, b) => (a.paidAt ?? "").localeCompare(b.paidAt ?? ""));
+  }
+
+  return byObligationId;
+}
 
 export async function GET(
   _req: NextRequest,
@@ -29,7 +79,7 @@ export async function GET(
 
     const { chargeId } = await context.params;
 
-    const [chargeRes, obligations, roles, targetsRes] =
+    const [chargeRes, obligations, roles, targetsRes, pendingByObligationId] =
       await Promise.all([
         supabase
           .from("finance_charges")
@@ -42,6 +92,7 @@ export async function GET(
           .from("finance_charge_targets")
           .select("target_type, target_id, mode, amount_cents")
           .eq("charge_id", chargeId),
+        loadPendingCentsByObligation(),
       ]);
 
     if (chargeRes.error) throw chargeRes.error;
@@ -66,6 +117,10 @@ export async function GET(
 
     const usersById = await loadBasicUsersByIds(Array.from(allUserIds));
 
+    const paymentsByObligationId = await loadCompletedPaymentsByObligation(
+      obligations.map((obligation) => obligation.id),
+    );
+
     const avatarRes = await supabase
       .from("users")
       .select("id, avatar")
@@ -80,6 +135,10 @@ export async function GET(
 
     const recipients = obligations.map((obligation) => {
       const user = usersById.get(obligation.user_id);
+      const pendingCents =
+        obligation.remaining_cents > 0
+          ? Math.min(pendingByObligationId.get(obligation.id) ?? 0, obligation.remaining_cents)
+          : 0;
       return {
         obligationId: obligation.id,
         userId: obligation.user_id,
@@ -89,8 +148,10 @@ export async function GET(
         amountCents: obligation.amount_cents,
         paidCents: obligation.paid_cents,
         remainingCents: obligation.remaining_cents,
-        paymentState: obligation.payment_state,
-        isOverdue: obligation.is_overdue,
+        pendingCents,
+        payments: paymentsByObligationId.get(obligation.id) ?? [],
+        paymentState: pendingCents > 0 ? "pending" : obligation.payment_state,
+        isOverdue: obligation.is_overdue && pendingCents === 0,
         isExempt: obligation.payment_state === "exempt",
         dueAt: obligation.due_at,
       };

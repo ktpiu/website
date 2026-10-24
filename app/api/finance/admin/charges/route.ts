@@ -11,11 +11,13 @@ import {
   ensureFinanceCustomerForUser,
   loadAllBasicRoles,
   loadAllBasicUsers,
+  loadPendingCentsByObligation,
   loadUserRoleRows,
 } from "@/lib/finance-server";
 import { resolveChargeRecipients } from "@/lib/finance-utils";
 
 type ChargeSummaryRow = {
+  id: string | null;
   charge_id: string | null;
   amount_cents: number | null;
   paid_cents: number | null;
@@ -37,14 +39,15 @@ export async function GET() {
     const context = await requireAppAuthContext();
     assertFinanceViewPermission(context);
 
-    const [chargesRes, obligationRes] = await Promise.all([
+    const [chargesRes, obligationRes, pendingByObligationId] = await Promise.all([
       supabase
         .from("finance_charges")
         .select("id, title, description, due_at, default_amount_cents, currency, created_at")
         .order("created_at", { ascending: false }),
       supabase
         .from("finance_obligation_balances")
-        .select("charge_id, amount_cents, paid_cents, payment_state, remaining_cents, is_overdue, user_id"),
+        .select("id, charge_id, amount_cents, paid_cents, payment_state, remaining_cents, is_overdue, user_id"),
+      loadPendingCentsByObligation(),
     ]);
 
     if (chargesRes.error) throw chargesRes.error;
@@ -57,6 +60,7 @@ export async function GET() {
         totalCents: number;
         paidCents: number;
         unpaidCount: number;
+        pendingCount: number;
         overdueCount: number;
         outstandingCents: number;
       }
@@ -72,6 +76,7 @@ export async function GET() {
           totalCents: 0,
           paidCents: 0,
           unpaidCount: 0,
+          pendingCount: 0,
           overdueCount: 0,
           outstandingCents: 0,
         };
@@ -90,10 +95,15 @@ export async function GET() {
 
       const remaining = typeof row.remaining_cents === "number" ? row.remaining_cents : 0;
       if (remaining > 0) {
-        current.unpaidCount += 1;
         current.outstandingCents += remaining;
-        if (row.is_overdue) {
-          current.overdueCount += 1;
+        // A member whose payment is still processing isn't counted as unpaid or overdue.
+        if (row.id && pendingByObligationId.has(row.id)) {
+          current.pendingCount += 1;
+        } else {
+          current.unpaidCount += 1;
+          if (row.is_overdue) {
+            current.overdueCount += 1;
+          }
         }
       }
 
@@ -110,6 +120,7 @@ export async function GET() {
         totalCents: 0,
         paidCents: 0,
         unpaidCount: 0,
+        pendingCount: 0,
         overdueCount: 0,
         outstandingCents: 0,
       };

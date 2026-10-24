@@ -35,6 +35,7 @@ export type ChargeSummary = {
   totalCents: number;
   paidCents: number;
   unpaidCount: number;
+  pendingCount: number;
   overdueCount: number;
   outstandingCents: number;
 };
