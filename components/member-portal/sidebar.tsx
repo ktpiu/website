@@ -104,8 +104,6 @@ export function MemberPortalSidebar() {
     ...(user?.account_status === "active"
       ? [
           { icon: Vote, label: "Elections", href: "/member-portal/elections" },
-          { icon: Gavel, label: "Vote", href: "/member-portal/elections/vote" },
-          { icon: ClipboardPen, label: "Run for Office", href: "/member-portal/elections/candidacy" },
         ]
       : []),
   ];
@@ -158,8 +156,9 @@ export function MemberPortalSidebar() {
   // Check if current path matches navigation item
   const isActiveRoute = (href: string) => {
     // Their sub-pages have their own sidebar items.
-    if (href === "/member-portal" || href === "/member-portal/elections") {
-      return pathname === href;
+    if (href === "/member-portal") return pathname === href;
+    if (href === "/member-portal/elections") {
+      return pathname.startsWith(href) && !pathname.startsWith(`${href}/manage`);
     }
     return pathname.startsWith(href);
   };

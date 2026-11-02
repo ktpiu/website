@@ -81,7 +81,7 @@ export default function CandidateProfilePage({ params }: { params: Promise<{ can
       <div className="mx-auto max-w-3xl space-y-6 pb-10">
         {back}
         <Card>
-          <CardContent className="pt-6 text-sm text-muted-foreground">{errorMessage(query.error)}</CardContent>
+          <CardContent className="text-sm text-muted-foreground">{errorMessage(query.error)}</CardContent>
         </Card>
       </div>
     );
@@ -90,6 +90,7 @@ export default function CandidateProfilePage({ params }: { params: Promise<{ can
   const { election, profile } = query.data;
   const canEndorse = endorsementsOpen(election) && !profile.is_me;
   const preview = profile.is_me && !profilesOpen(election);
+  const materialsVisible = profile.materials_visible;
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 pb-10">
@@ -97,8 +98,16 @@ export default function CandidateProfilePage({ params }: { params: Promise<{ can
 
       {preview ? (
         <Card>
-          <CardContent className="pt-6 text-sm text-muted-foreground">
+          <CardContent className="text-sm text-muted-foreground">
             This is a preview of your profile. Members can see it after the submission deadline.
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {!materialsVisible ? (
+        <Card>
+          <CardContent className="text-sm text-muted-foreground">
+            Candidate materials aren&apos;t available yet. You can read endorsements below.
           </CardContent>
         </Card>
       ) : null}
@@ -154,33 +163,37 @@ export default function CandidateProfilePage({ params }: { params: Promise<{ can
         </Carousel>
       ) : null}
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Introduction</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {profile.intro ? (
-            <p className="whitespace-pre-wrap text-sm leading-6">{profile.intro}</p>
-          ) : (
-            <p className="text-sm text-muted-foreground">No introduction submitted.</p>
-          )}
-        </CardContent>
-      </Card>
-
-      {profile.seats.map((seat) => (
-        <Card key={seat.position_id}>
+      {materialsVisible ? (
+        <>
+        <Card>
           <CardHeader>
-            <CardTitle className="text-base">Initiatives: {seat.title}</CardTitle>
+            <CardTitle className="text-base">Introduction</CardTitle>
           </CardHeader>
           <CardContent>
-            {seat.video_url ? (
-              <VideoPlayer url={seat.video_url} title={`${profile.name}: ${seat.title} initiatives`} />
+            {profile.intro ? (
+              <p className="whitespace-pre-wrap text-sm leading-6">{profile.intro}</p>
             ) : (
-              <p className="text-sm text-muted-foreground">No video submitted.</p>
+              <p className="text-sm text-muted-foreground">No introduction submitted.</p>
             )}
           </CardContent>
         </Card>
-      ))}
+
+        {profile.seats.map((seat) => (
+          <Card key={seat.position_id}>
+            <CardHeader>
+              <CardTitle className="text-base">Initiatives: {seat.title}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {seat.video_url ? (
+                <VideoPlayer url={seat.video_url} title={`${profile.name}: ${seat.title} initiatives`} />
+              ) : (
+                <p className="text-sm text-muted-foreground">No video submitted.</p>
+              )}
+            </CardContent>
+          </Card>
+        ))}
+        </>
+      ) : null}
 
       {profile.awards ? (
         <Card>

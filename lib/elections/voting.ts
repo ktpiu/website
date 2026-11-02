@@ -7,6 +7,7 @@ import {
   type CandidacyStatus,
   type Election,
   type ManagerVotingState,
+  type OpenRound,
   type PendingSelection,
   type ResultStatus,
   type RoundSummary,
@@ -45,13 +46,14 @@ type RoundRow = {
   position_id: string;
   kind: RoundSummary["kind"];
   status: RoundSummary["status"];
+  seats: number;
   opened_at: string;
   closed_at: string | null;
 };
 
 type ResultRow = {
   position_id: string;
-  winner_candidacy_id: string | null;
+  winner_candidacy_ids: string[];
   status: ResultStatus;
   resolution: SeatResult["resolution"];
   tied_candidacy_ids: string[];
@@ -59,7 +61,7 @@ type ResultRow = {
 
 /**
  * The shared voting picture: seat results, every round (counts only once a
- * round has closed), the open round's choices and how many ballots are in,
+ * round has closed), the open rounds' choices and how many ballots are in,
  * and candidates who must pick between two seats. Built only from receipts
  * (who voted) and tallies (how many), which are never joined.
  */
@@ -76,12 +78,12 @@ export async function buildVotingState(election: Election): Promise<{
       .eq("election_candidates.election_id", electionId),
     supabaseAdmin
       .from("election_rounds")
-      .select("id, position_id, kind, status, opened_at, closed_at")
+      .select("id, position_id, kind, status, seats, opened_at, closed_at")
       .eq("election_id", electionId)
       .order("opened_at"),
     supabaseAdmin
       .from("election_results")
-      .select("position_id, winner_candidacy_id, status, resolution, tied_candidacy_ids")
+      .select("position_id, winner_candidacy_ids, status, resolution, tied_candidacy_ids")
       .eq("election_id", electionId),
     supabaseAdmin
       .from("election_participants")
@@ -143,6 +145,7 @@ export async function buildVotingState(election: Election): Promise<{
     position_id: r.position_id,
     kind: r.kind,
     status: r.status,
+    seats: r.seats,
     opened_at: r.opened_at,
     closed_at: r.closed_at,
     ballots_cast: ballots.get(r.id) ?? 0,
@@ -158,29 +161,34 @@ export async function buildVotingState(election: Election): Promise<{
       title: p.title,
       status: r?.status ?? null,
       resolution: r?.resolution ?? null,
-      winner: r?.winner_candidacy_id ? (choiceById.get(r.winner_candidacy_id) ?? null) : null,
+      seats: p.seats,
+      winners: (r?.winner_candidacy_ids ?? []).map((id) => choiceById.get(id)).filter((c): c is VotingChoice => Boolean(c)),
       tied: (r?.tied_candidacy_ids ?? []).map((id) => choiceById.get(id)).filter((c): c is VotingChoice => Boolean(c)),
     };
   });
 
-  let openRound: VotingState["open_round"] = null;
-  const open = summaries.find((r) => r.status === "open");
-  if (open) {
+  const open = summaries.filter((r) => r.status === "open");
+  const choicesByRound = new Map<string, VotingChoice[]>();
+  if (open.length > 0) {
     const { data, error } = await supabaseAdmin
       .from("election_tallies")
-      .select("choice")
-      .eq("round_id", open.id)
+      .select("round_id, choice")
+      .in("round_id", open.map((r) => r.id))
       .neq("choice", "abstain");
     if (error) throw error;
-    openRound = {
-      ...open,
-      title: positionTitle.get(open.position_id) ?? "Position",
-      choices: ((data ?? []) as Array<{ choice: string }>)
-        .map((t) => choiceById.get(t.choice))
-        .filter((c): c is VotingChoice => Boolean(c))
-        .sort((a, b) => a.name.localeCompare(b.name)),
-    };
+    for (const t of (data ?? []) as Array<{ round_id: string; choice: string }>) {
+      const choice = choiceById.get(t.choice);
+      if (choice) choicesByRound.set(t.round_id, [...(choicesByRound.get(t.round_id) ?? []), choice]);
+    }
   }
+  const sortOrder = new Map(positions.map((p) => [p.id, p.sort_order]));
+  const openRounds: OpenRound[] = open
+    .map((r) => ({
+      ...r,
+      title: positionTitle.get(r.position_id) ?? "Position",
+      choices: (choicesByRound.get(r.id) ?? []).sort((a, b) => a.name.localeCompare(b.name)),
+    }))
+    .sort((a, b) => (sortOrder.get(a.position_id) ?? 0) - (sortOrder.get(b.position_id) ?? 0));
 
   // Candidates holding two won seats.
   const wonByCandidate = new Map<string, PendingSelection>();
@@ -202,7 +210,7 @@ export async function buildVotingState(election: Election): Promise<{
       positions,
       results,
       rounds: summaries,
-      open_round: openRound,
+      open_rounds: openRounds,
       admitted_count: participantRes.count ?? 0,
       pending_selections: Array.from(wonByCandidate.values()).filter((s) => s.seats.length > 1),
     },

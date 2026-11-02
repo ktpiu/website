@@ -50,6 +50,7 @@
     "radix-ui": "^1.4.3",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
+    "react-dropzone": "^14.4.1",
     "react-easy-crop": "^6.2.3",
     "react-email": "^6.11.0",
     "react-textfit": "^1.1.1",

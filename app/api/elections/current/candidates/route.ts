@@ -6,18 +6,19 @@ import { listBallotCandidates } from "@/lib/elections/endorsements";
 
 export const dynamic = "force-dynamic";
 
-/** The finalized candidates of the election underway, for active members. */
+/**
+ * The positions and approved candidates so far of the election underway, for
+ * active members. Pending and denied applicants are never listed.
+ */
 export async function GET() {
   try {
     const context = await requireAppAuthContext();
     assertActiveMember(context);
     const election = await getRunningElection();
-    if (!election || !election.candidates_finalized_at) {
-      return NextResponse.json({ election, positions: [], candidates: [] });
-    }
+    if (!election) return NextResponse.json({ election, positions: [], candidates: [] });
     const [positions, candidates] = await Promise.all([
       getPositions(election.id),
-      listBallotCandidates(election.id, context.appUser.id),
+      listBallotCandidates(election.id, context.appUser.id, Boolean(election.candidates_finalized_at)),
     ]);
     return NextResponse.json({ election, positions, candidates });
   } catch (error) {

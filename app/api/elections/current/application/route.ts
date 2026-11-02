@@ -47,19 +47,7 @@ export async function POST(request: Request) {
     const existing = await getCandidateRow(election.id, userId);
     if (!existing && !transcriptFile) throw new RushError(400, "Attach your unofficial IU transcript.");
 
-    // Checked up front (the database enforces it too) so a rejected update
-    // doesn't withdraw pending seats first. Approved seats count; denied and
-    // withdrawn ones don't.
     const kept = new Set(positionIds);
-    const current = existing?.election_candidacies ?? [];
-    const approvedCount = current.filter((c) => c.status === "approved").length;
-    const requestedCount = positionIds.filter(
-      (id) => !current.some((c) => c.position_id === id && c.status !== "pending"),
-    ).length;
-    if (approvedCount + requestedCount > election.max_positions_per_candidate) {
-      throw new RushError(409, `You can run for up to ${election.max_positions_per_candidate} positions.`);
-    }
-
     const transcriptPath = transcriptFile ? await uploadTranscript(election.id, userId, transcriptFile) : null;
     try {
       let candidateId = existing?.id;

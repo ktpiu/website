@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import { NativeSelect } from "@/components/rush/native-select";
 import { RushPageHeader } from "@/components/member-portal/rush/shared";
 import { CandidatesPanel } from "@/components/member-portal/elections/candidates-panel";
@@ -22,15 +23,15 @@ import { errorMessage, rushFetch } from "@/lib/rush/client";
 import { formatEastern, isoToEasternInput } from "@/lib/elections/eastern-time";
 import {
   electionStage,
-  MAX_POSITIONS_LIMIT,
-  positionsLocked,
+  MAX_SEATS,
   STAGE_LABELS,
   type BallotRole,
   type Election,
   type ElectionPosition,
 } from "@/lib/elections/types";
 
-type SettingsDraft = { name: string; submissionDeadline: string; maxPositionsPerCandidate: string };
+type SettingsDraft = { name: string; submissionDeadline: string; electionDate: string; requireJoinCode: boolean };
+type SeatsDraft = { roleIds: Set<string>; seats: Record<string, number> };
 
 export default function ElectionManagePage() {
   const { permissions } = useAuthStore();
@@ -55,9 +56,9 @@ export default function ElectionManagePage() {
       rushFetch<{ election: Election; positions: ElectionPosition[] }>(`/api/elections/${activeId}`),
   });
 
-  const [creating, setCreating] = useState<(SettingsDraft & { roleIds: Set<string> }) | null>(null);
+  const [creating, setCreating] = useState<(SettingsDraft & SeatsDraft) | null>(null);
   const [editing, setEditing] = useState<SettingsDraft | null>(null);
-  const [editingSeats, setEditingSeats] = useState<Set<string> | null>(null);
+  const [editingSeats, setEditingSeats] = useState<SeatsDraft | null>(null);
   const [saving, setSaving] = useState(false);
 
   if (!canManage) {
@@ -93,15 +94,16 @@ export default function ElectionManagePage() {
   const election = detail.data?.election ?? null;
   const positions = detail.data?.positions ?? [];
   const stage = election ? electionStage(election) : null;
-  const locked = election ? positionsLocked(election) || election.phase === "closed" : true;
   const seatsLocked = !election || election.phase === "closed";
 
   const startCreate = () =>
     setCreating({
       name: "",
       submissionDeadline: "",
-      maxPositionsPerCandidate: "2",
+      electionDate: "",
+      requireJoinCode: true,
       roleIds: new Set(roles.map((r) => r.id)),
+      seats: {},
     });
 
   const saveCreate = async () => {
@@ -113,8 +115,10 @@ export default function ElectionManagePage() {
         json: {
           name: creating.name,
           submissionDeadline: creating.submissionDeadline,
-          maxPositionsPerCandidate: Number(creating.maxPositionsPerCandidate),
+          electionDate: creating.electionDate,
+          requireJoinCode: creating.requireJoinCode,
           roleIds: Array.from(creating.roleIds),
+          seats: creating.seats,
         },
       });
       createdId = result.election.id;
@@ -141,7 +145,8 @@ export default function ElectionManagePage() {
           json: {
             name: editing.name,
             submissionDeadline: editing.submissionDeadline,
-            ...(locked ? {} : { maxPositionsPerCandidate: Number(editing.maxPositionsPerCandidate) }),
+            electionDate: editing.electionDate,
+            requireJoinCode: editing.requireJoinCode,
           },
         }),
       "Settings saved.",
@@ -152,7 +157,10 @@ export default function ElectionManagePage() {
   const saveSeats = async () => {
     if (!editingSeats || !election) return;
     const ok = await run(
-      () => rushFetch(`/api/elections/${election.id}/positions`, { method: "PUT", json: { roleIds: Array.from(editingSeats) } }),
+      () => rushFetch(`/api/elections/${election.id}/positions`, {
+        method: "PUT",
+        json: { roleIds: Array.from(editingSeats.roleIds), seats: editingSeats.seats },
+      }),
       "Positions saved.",
     );
     if (ok) setEditingSeats(null);
@@ -202,7 +210,7 @@ export default function ElectionManagePage() {
           <CardHeader>
             <CardTitle className="text-base">No elections yet</CardTitle>
             <CardDescription>
-              Create an election to choose its positions and set the submission deadline.
+              Create an election to choose its positions and set its dates.
             </CardDescription>
           </CardHeader>
         </Card>
@@ -231,7 +239,8 @@ export default function ElectionManagePage() {
                       setEditing({
                         name: election.name,
                         submissionDeadline: isoToEasternInput(election.submission_deadline),
-                        maxPositionsPerCandidate: String(election.max_positions_per_candidate),
+                        electionDate: election.election_date ? isoToEasternInput(election.election_date) : "",
+                        requireJoinCode: election.require_join_code,
                       })
                     }
                   >
@@ -243,12 +252,20 @@ export default function ElectionManagePage() {
             <CardContent>
               <dl className="grid gap-4 text-sm sm:grid-cols-2">
                 <div>
-                  <dt className="text-muted-foreground">Submission deadline</dt>
+                  <dt className="text-muted-foreground">Materials due (candidates only)</dt>
                   <dd className="font-medium">{formatEastern(election.submission_deadline)}</dd>
                 </div>
                 <div>
-                  <dt className="text-muted-foreground">Positions per candidate</dt>
-                  <dd className="font-medium">Up to {election.max_positions_per_candidate}</dd>
+                  <dt className="text-muted-foreground">Election planned (shown to members)</dt>
+                  <dd className="font-medium">
+                    {election.election_date ? formatEastern(election.election_date) : "Not set"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Voting</dt>
+                  <dd className="font-medium">
+                    {election.require_join_code ? "In person, with a join code" : "From anywhere, no join code"}
+                  </dd>
                 </div>
               </dl>
             </CardContent>
@@ -268,7 +285,12 @@ export default function ElectionManagePage() {
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => setEditingSeats(new Set(positions.map((p) => p.role_id).filter((id): id is string => Boolean(id))))}
+                  onClick={() =>
+                    setEditingSeats({
+                      roleIds: new Set(positions.map((p) => p.role_id).filter((id): id is string => Boolean(id))),
+                      seats: Object.fromEntries(positions.flatMap((p) => (p.role_id ? [[p.role_id, p.seats]] : []))),
+                    })
+                  }
                 >
                   <Pencil className="mr-1.5 h-4 w-4" /> Edit positions
                 </Button>
@@ -282,7 +304,8 @@ export default function ElectionManagePage() {
                   {positions.map((p, index) => (
                     <li key={p.id} className="flex items-center gap-3 px-3 py-2.5 text-sm">
                       <span className="w-6 text-right tabular-nums text-muted-foreground">{index + 1}</span>
-                      <span className="font-medium">{p.title}</span>
+                      <span className="min-w-0 flex-1 font-medium">{p.title}</span>
+                      {p.seats > 1 ? <Badge variant="outline">{p.seats} winners</Badge> : null}
                     </li>
                   ))}
                 </ol>
@@ -300,7 +323,7 @@ export default function ElectionManagePage() {
 
           <VotingPanel key={election.id} election={election} />
 
-          {election.candidates_finalized_at ? <EndorsementsPanel election={election} /> : null}
+          {election.phase !== "setup" ? <EndorsementsPanel election={election} /> : null}
         </>
       )}
 
@@ -315,12 +338,12 @@ export default function ElectionManagePage() {
               <SettingsFields
                 draft={creating}
                 onChange={(patch) => setCreating((d) => (d ? { ...d, ...patch } : d))}
-                maxLocked={false}
+                joinCodeLocked={false}
               />
               <RoleChecklist
                 roles={roles}
-                selected={creating.roleIds}
-                onChange={(roleIds) => setCreating((d) => (d ? { ...d, roleIds } : d))}
+                draft={creating}
+                onChange={(patch) => setCreating((d) => (d ? { ...d, ...patch } : d))}
               />
             </div>
           ) : null}
@@ -344,7 +367,7 @@ export default function ElectionManagePage() {
             <SettingsFields
               draft={editing}
               onChange={(patch) => setEditing((d) => (d ? { ...d, ...patch } : d))}
-              maxLocked={locked}
+              joinCodeLocked={election?.phase === "voting"}
             />
           ) : null}
           <DialogFooter>
@@ -367,7 +390,14 @@ export default function ElectionManagePage() {
               positions from the Candidates card.
             </DialogDescription>
           </DialogHeader>
-          {editingSeats ? <RoleChecklist roles={roles} selected={editingSeats} onChange={setEditingSeats} /> : null}
+          {editingSeats ? (
+            <RoleChecklist
+              roles={roles}
+              draft={editingSeats}
+              seatsLocked={election?.phase === "voting"}
+              onChange={(patch) => setEditingSeats((d) => (d ? { ...d, ...patch } : d))}
+            />
+          ) : null}
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditingSeats(null)}>
               Cancel
@@ -385,11 +415,11 @@ export default function ElectionManagePage() {
 function SettingsFields({
   draft,
   onChange,
-  maxLocked,
+  joinCodeLocked,
 }: {
   draft: SettingsDraft;
   onChange: (patch: Partial<SettingsDraft>) => void;
-  maxLocked: boolean;
+  joinCodeLocked: boolean;
 }) {
   return (
     <div className="space-y-4">
@@ -404,7 +434,7 @@ function SettingsFields({
         />
       </div>
       <div className="space-y-1.5">
-        <Label htmlFor="election-deadline">Submission deadline (Eastern Time)</Label>
+        <Label htmlFor="election-deadline">Materials due (Eastern Time)</Label>
         <Input
           id="election-deadline"
           type="datetime-local"
@@ -412,25 +442,36 @@ function SettingsFields({
           onChange={(e) => onChange({ submissionDeadline: e.target.value })}
         />
         <p className="text-xs text-muted-foreground">
-          Candidates can edit their materials until then. Member review opens at the deadline.
+          Shown to candidates only. They can edit their materials until then, and member review opens at the deadline.
         </p>
       </div>
       <div className="space-y-1.5">
-        <Label htmlFor="election-max">Positions per candidate</Label>
-        <NativeSelect
-          id="election-max"
-          className="w-28"
-          value={draft.maxPositionsPerCandidate}
-          disabled={maxLocked}
-          onChange={(e) => onChange({ maxPositionsPerCandidate: e.target.value })}
-        >
-          {Array.from({ length: MAX_POSITIONS_LIMIT }, (_, i) => String(i + 1)).map((n) => (
-            <option key={n} value={n}>
-              {n}
-            </option>
-          ))}
-        </NativeSelect>
-        {maxLocked ? <p className="text-xs text-muted-foreground">Locked because candidates are finalized.</p> : null}
+        <Label htmlFor="election-date">Election planned for (Eastern Time)</Label>
+        <Input
+          id="election-date"
+          type="datetime-local"
+          value={draft.electionDate}
+          onChange={(e) => onChange({ electionDate: e.target.value })}
+        />
+        <p className="text-xs text-muted-foreground">
+          Shown to all members. Voting doesn&apos;t open automatically; you start it from the Voting card.
+        </p>
+      </div>
+      <div className="flex items-start justify-between gap-4">
+        <div className="space-y-0.5">
+          <Label htmlFor="election-code">Require a join code</Label>
+          <p className="text-xs text-muted-foreground">
+            {joinCodeLocked
+              ? "Locked because voting has started."
+              : "On: voters enter a code shown in the room. Off: any active member can vote from anywhere."}
+          </p>
+        </div>
+        <Switch
+          id="election-code"
+          checked={draft.requireJoinCode}
+          disabled={joinCodeLocked}
+          onCheckedChange={(requireJoinCode) => onChange({ requireJoinCode })}
+        />
       </div>
     </div>
   );
@@ -438,48 +479,68 @@ function SettingsFields({
 
 function RoleChecklist({
   roles,
-  selected,
+  draft,
   onChange,
+  seatsLocked = false,
 }: {
   roles: BallotRole[];
-  selected: Set<string>;
-  onChange: (next: Set<string>) => void;
+  draft: SeatsDraft;
+  onChange: (patch: Partial<SeatsDraft>) => void;
+  seatsLocked?: boolean;
 }) {
   const toggle = (id: string, on: boolean) => {
-    const next = new Set(selected);
+    const next = new Set(draft.roleIds);
     if (on) next.add(id);
     else next.delete(id);
-    onChange(next);
+    onChange({ roleIds: next });
   };
-  const groups: Array<{ label: string; type: BallotRole["type"] }> = [
-    { label: "Executive board", type: "exec" },
-    { label: "Directors", type: "director" },
+  const groups: Array<{ label: string; group: BallotRole["group"] }> = [
+    { label: "Executive board", group: "exec" },
+    { label: "Directors", group: "director" },
+    { label: "Standards Board", group: "standards" },
   ];
 
   return (
     <div className="space-y-3">
       <Label>Positions on the ballot</Label>
+      <p className="text-xs text-muted-foreground">
+        Set how many winners each position has. Members choose up to that many.
+      </p>
       {groups.map((group) => {
-        const inGroup = roles.filter((r) => r.type === group.type);
+        const inGroup = roles.filter((r) => r.group === group.group);
         if (inGroup.length === 0) return null;
         return (
-          <fieldset key={group.type} className="space-y-1.5">
+          <fieldset key={group.group} className="space-y-1.5">
             <legend className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{group.label}</legend>
-            {inGroup.map((role) => (
-              <label key={role.id} className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={selected.has(role.id)}
-                  onChange={(e) => toggle(role.id, e.target.checked)}
-                />
-                {role.name}
-              </label>
-            ))}
+            {inGroup.map((role) => {
+              const checked = draft.roleIds.has(role.id);
+              return (
+                <div key={role.id} className="flex items-center gap-2 text-sm">
+                  <label className="flex min-w-0 flex-1 items-center gap-2">
+                    <input type="checkbox" checked={checked} onChange={(e) => toggle(role.id, e.target.checked)} />
+                    {role.name}
+                  </label>
+                  {checked ? (
+                    <Input
+                      type="number"
+                      className="h-8 w-16"
+                      min={1}
+                      max={MAX_SEATS}
+                      inputMode="numeric"
+                      disabled={seatsLocked}
+                      aria-label={`Winners for ${role.name}`}
+                      value={draft.seats[role.id] ?? 1}
+                      onChange={(e) => onChange({ seats: { ...draft.seats, [role.id]: Number(e.target.value) } })}
+                    />
+                  ) : null}
+                </div>
+              );
+            })}
           </fieldset>
         );
       })}
       {roles.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No executive board or director roles exist yet. Add them on the Roles page.</p>
+        <p className="text-sm text-muted-foreground">No ballot roles exist yet. Add them on the Roles page.</p>
       ) : null}
     </div>
   );

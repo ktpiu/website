@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { NativeSelect } from "@/components/rush/native-select";
+import { PeopleSelector } from "@/components/ui/people-selector";
 import { MaterialsEditor } from "@/components/member-portal/elections/materials-editor";
 import { errorMessage, rushFetch } from "@/lib/rush/client";
 import {
@@ -103,7 +103,7 @@ export function CandidatesPanel({
   };
 
   const finalize = async () => {
-    if (!window.confirm("Finalize candidates? The list locks, approved candidates can submit materials, and members can start endorsing.")) return;
+    if (!window.confirm("Finalize candidates? Registration closes, the list locks, and members can see the final list and endorsements.")) return;
     setSaving(true);
     try {
       await rushFetch(`/api/elections/${election.id}/finalize`, { method: "POST" });
@@ -384,23 +384,17 @@ export function CandidatesPanel({
             <div className="space-y-4">
               <div className="space-y-1.5">
                 <Label htmlFor="campaigner">Member</Label>
-                <NativeSelect
+                <PeopleSelector
                   id="campaigner"
-                  value={adding.userId}
-                  onChange={(e) => setAdding((a) => (a ? { ...a, userId: e.target.value } : a))}
-                >
-                  <option value="">Choose an active member</option>
-                  {members.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-                </NativeSelect>
+                  options={members.map((m) => ({ key: m.id, name: m.name }))}
+                  value={adding.userId ? [adding.userId] : []}
+                  onChange={(value) => setAdding((a) => (a ? { ...a, userId: value[0] ?? "" } : a))}
+                  loading={candidates.isPending}
+                  placeholder="Choose an active member"
+                />
               </div>
               <fieldset className="space-y-1.5">
-                <legend className="mb-1 text-sm font-medium">
-                  Positions (up to {election.max_positions_per_candidate})
-                </legend>
+                <legend className="mb-1 text-sm font-medium">Positions</legend>
                 {addableSeats.map((p) => (
                   <label key={p.id} className="flex items-center gap-2 text-sm">
                     <input

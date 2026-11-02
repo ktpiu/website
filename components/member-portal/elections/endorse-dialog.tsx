@@ -77,8 +77,8 @@ export function EndorseDialog({
         <DialogHeader>
           <DialogTitle>Endorse {target.name}</DialogTitle>
           <DialogDescription>
-            One endorsement per candidate. It appears on their profile once the Standards Board approves it, and any
-            edit goes back for approval.
+            One endorsement per candidate. It appears on their profile once the Standards Board approves it and
+            registration has closed. Any edit goes back for approval.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">

@@ -2,10 +2,11 @@ import "server-only";
 import { randomUUID } from "crypto";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { RushError } from "@/lib/rush/server";
-import { easternInputToIso } from "@/lib/elections/eastern-time";
+import { easternInputToIso, formatEastern } from "@/lib/elections/eastern-time";
 import { validateTranscriptFile } from "@/lib/elections/uploads";
 import {
-  MAX_POSITIONS_LIMIT,
+  MAX_SEATS,
+  STANDARDS_ROLE_NAME,
   type BallotRole,
   type Candidacy,
   type Election,
@@ -34,23 +35,28 @@ export async function getElection(electionId: string): Promise<Election> {
 export async function getPositions(electionId: string): Promise<ElectionPosition[]> {
   const { data, error } = await supabaseAdmin
     .from("election_positions")
-    .select("id, election_id, role_id, title, sort_order, created_at")
+    .select("id, election_id, role_id, title, seats, sort_order, created_at")
     .eq("election_id", electionId)
     .order("sort_order");
   if (error) throw error;
   return (data ?? []) as ElectionPosition[];
 }
 
-/** Exec and director roles, in Roles page order (the ballot order). */
+/** Exec, director and Standards Board roles, in Roles page order (the ballot order). */
 export async function getBallotRoles(): Promise<BallotRole[]> {
   const { data, error } = await supabaseAdmin
     .from("roles")
     .select("id, name, type, priority")
-    .in("type", ["exec", "director"])
+    .or(`type.in.(exec,director),name.eq."${STANDARDS_ROLE_NAME}"`)
     .order("priority", { ascending: false })
     .order("name");
   if (error) throw error;
-  return (data ?? []) as BallotRole[];
+  return ((data ?? []) as Array<{ id: string; name: string; type: string; priority: number }>).map((r) => ({
+    id: r.id,
+    name: r.name,
+    priority: r.priority,
+    group: r.name === STANDARDS_ROLE_NAME ? "standards" : r.type === "exec" ? "exec" : "director",
+  }));
 }
 
 export function parseDeadline(value: unknown): string {
@@ -59,12 +65,30 @@ export function parseDeadline(value: unknown): string {
   return iso;
 }
 
-export function parseMaxPositions(value: unknown): number {
-  const n = Number(value);
-  if (!Number.isInteger(n) || n < 1 || n > MAX_POSITIONS_LIMIT) {
-    throw new RushError(400, `Candidates can run for 1 to ${MAX_POSITIONS_LIMIT} positions.`);
+export function parseElectionDate(value: unknown): string {
+  const iso = typeof value === "string" ? easternInputToIso(value) : null;
+  if (!iso) throw new RushError(400, "Enter the planned election date (Eastern Time).");
+  return iso;
+}
+
+/** Materials are reviewed before the election, so they can't be due after it. */
+export function assertDatesInOrder(submissionDeadline: string, electionDate: string | null) {
+  if (electionDate && new Date(submissionDeadline) > new Date(electionDate)) {
+    throw new RushError(400, `Materials must be due before the election (${formatEastern(electionDate)}).`);
   }
-  return n;
+}
+
+/** Winners per role, as { roleId: count }; roles left out have one. */
+export function parseSeats(value: unknown): Record<string, number> {
+  const seats: Record<string, number> = {};
+  for (const [roleId, raw] of Object.entries((value ?? {}) as Record<string, unknown>)) {
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 1 || n > MAX_SEATS) {
+      throw new RushError(400, `A position can have 1 to ${MAX_SEATS} winners.`);
+    }
+    seats[roleId] = n;
+  }
+  return seats;
 }
 
 export function parseRoleIds(value: unknown): string[] {
@@ -78,11 +102,11 @@ export function parseRoleIds(value: unknown): string[] {
  * Makes the election's seats exactly `roleIds`, ordered like the Roles page.
  * Refuses to drop a seat someone has already applied for.
  */
-export async function syncPositions(electionId: string, roleIds: string[]) {
+export async function syncPositions(electionId: string, roleIds: string[], seats: Record<string, number> = {}) {
   const roles = await getBallotRoles();
   const byId = new Map(roles.map((r) => [r.id, r]));
   const unknown = roleIds.filter((id) => !byId.has(id));
-  if (unknown.length > 0) throw new RushError(400, "Only executive board and director roles can be on the ballot.");
+  if (unknown.length > 0) throw new RushError(400, "Only executive board, director and Standards Board roles can be on the ballot.");
 
   const existing = await getPositions(electionId);
   const wanted = new Set(roleIds);
@@ -111,6 +135,7 @@ export async function syncPositions(electionId: string, roleIds: string[]) {
     election_id: electionId,
     role_id: role.id,
     title: role.name,
+    seats: seats[role.id] ?? 1,
     sort_order: index + 1,
   }));
   const { error: upsertError } = await supabaseAdmin
@@ -121,7 +146,7 @@ export async function syncPositions(electionId: string, roleIds: string[]) {
 
 /** Columns members may see. Leaves out the voting join code, which proves a voter is in the room. */
 const MEMBER_ELECTION_COLUMNS =
-  "id, name, phase, submission_deadline, max_positions_per_candidate, candidates_finalized_at, created_at, updated_at, closed_at";
+  "id, name, phase, submission_deadline, election_date, require_join_code, candidates_finalized_at, created_at, updated_at, closed_at";
 
 /** The election in applications, campaign or voting, if any (at most one). */
 export async function getRunningElection(): Promise<Election | null> {
@@ -135,14 +160,17 @@ export async function getRunningElection(): Promise<Election | null> {
 }
 
 const DB_ERRORS: Record<string, [number, string]> = {
-  TOO_MANY_POSITIONS: [409, "That's more positions than this election allows per candidate."],
   POSITION_NOT_IN_ELECTION: [400, "That position isn't part of this election."],
   ROUND_CLOSED: [409, "Voting for this position has closed."],
   NOT_ADMITTED: [403, "You haven't been admitted to vote. Enter the code on the screen."],
-  ALREADY_VOTED: [409, "You've already voted in this round."],
+  ALREADY_VOTED: [409, "You've already voted for one of these positions. Refresh to see what's left."],
+  INCOMPLETE_BALLOT: [409, "The ballot changed. Review it and submit again."],
+  TOO_MANY_CHOICES: [400, "You chose more candidates than a position has seats."],
+  NOT_CAMPAIGN: [409, "Finalize candidates before starting voting."],
+  REVOTE_SINGLE_SEAT: [409, "Re-votes are only for positions with one winner."],
   INVALID_CHOICE: [400, "That isn't one of the choices in this round."],
   NOT_VOTING: [409, "Voting hasn't started."],
-  ROUND_ALREADY_OPEN: [409, "Close the open vote first."],
+  ROUND_ALREADY_OPEN: [409, "This position is already open for voting."],
   ALREADY_DECIDED: [409, "This position has already been voted on."],
   NOT_TIED: [409, "This position isn't tied."],
   NOTHING_TO_REVOTE: [409, "Nobody has declined this seat, so there's nothing to re-vote."],
@@ -310,7 +338,6 @@ export async function addCandidacies(
   if (error) throw error;
   const held = new Set((existing ?? []).map((c) => c.position_id as string));
   const fresh = positionIds.filter((id) => !held.has(id));
-  // One at a time so the per-candidate limit trigger sees each insert.
   for (const positionId of fresh) {
     const { error: insertError } = await supabaseAdmin.from("election_candidacies").insert({
       candidate_id: candidateId,

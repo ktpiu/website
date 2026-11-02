@@ -25,9 +25,9 @@ type EndorsementRow = MyEndorsement & {
 };
 
 /**
- * A candidate's profile for active members, once review opens at the
- * deadline (candidates can preview their own earlier). Never includes the
- * transcript; only approved endorsements are listed.
+ * A candidate's profile for active members once registration closes, with
+ * approved endorsements. Their materials follow at the deadline (candidates
+ * can preview their own earlier). Never includes the transcript.
  */
 export async function GET(_request: Request, { params }: Params) {
   try {
@@ -51,13 +51,11 @@ export async function GET(_request: Request, { params }: Params) {
     if (!row || onBallot.length === 0) throw new RushError(404, "Candidate not found.");
 
     const isMe = row.user_id === context.appUser.id;
-    if (!isMe && !profilesOpen(election)) {
-      throw new RushError(403, "Candidate profiles open for review after the submission deadline.");
-    }
+    const materialsVisible = isMe || profilesOpen(election);
 
     const [positions, photos, endorsements] = await Promise.all([
       getPositions(election.id),
-      getCandidatePhotos(row.id),
+      materialsVisible ? getCandidatePhotos(row.id) : [],
       supabaseAdmin
         .from("election_endorsements")
         .select("id, kind, body, video_url, status, author_user_id, author:users!election_endorsements_author_user_id_fkey(name)")
@@ -74,13 +72,14 @@ export async function GET(_request: Request, { params }: Params) {
       name: row.users?.name ?? "",
       avatar: row.users?.avatar ?? null,
       is_me: isMe,
-      intro: row.intro ?? "",
-      awards: row.awards ?? "",
+      materials_visible: materialsVisible,
+      intro: materialsVisible ? (row.intro ?? "") : "",
+      awards: materialsVisible ? (row.awards ?? "") : "",
       photos,
       seats: onBallot
         .filter((c) => order.has(c.position_id))
         .sort((a, b) => order.get(a.position_id)!.sort_order - order.get(b.position_id)!.sort_order)
-        .map((c) => ({ position_id: c.position_id, title: order.get(c.position_id)!.title, video_url: c.video_url })),
+        .map((c) => ({ position_id: c.position_id, title: order.get(c.position_id)!.title, video_url: materialsVisible ? c.video_url : null })),
       endorsements: endorsementRows
         .filter((e) => e.status === "approved")
         .map((e) => ({

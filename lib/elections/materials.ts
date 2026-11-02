@@ -5,7 +5,7 @@ import { ELECTIONS_MANAGE } from "@/lib/permissions";
 import { RushError } from "@/lib/rush/server";
 import type { AppAuthContext } from "@/lib/server-auth";
 import { ELECTIONS_BUCKET, getElection, getPositions } from "@/lib/elections/server";
-import { MAX_PHOTOS, PHOTO_TYPES, validatePhotoFile } from "@/lib/elections/uploads";
+import { MAX_PHOTOS, PHOTO_TYPES, sniffPhotoType, validatePhotoFile } from "@/lib/elections/uploads";
 import type { CandidateMaterials, CandidatePhoto, Election } from "@/lib/elections/types";
 
 const PHOTO_URL_SECONDS = 60 * 60;
@@ -149,10 +149,14 @@ export async function addCandidatePhoto(candidateId: string, electionId: string,
   if (countError) throw countError;
   if ((count ?? 0) >= MAX_PHOTOS) throw new RushError(409, `You can upload up to ${MAX_PHOTOS} photos.`);
 
-  const path = `photos/${electionId}/${candidateId}/${Date.now()}-${randomUUID()}.${PHOTO_TYPES[file.type]}`;
+  const bytes = Buffer.from(await file.arrayBuffer());
+  const type = sniffPhotoType(bytes);
+  if (!type) throw new RushError(400, "Photos must be a JPEG, PNG or WebP image.");
+
+  const path = `photos/${electionId}/${candidateId}/${Date.now()}-${randomUUID()}.${PHOTO_TYPES[type]}`;
   const { error: uploadError } = await supabaseAdmin.storage
     .from(ELECTIONS_BUCKET)
-    .upload(path, Buffer.from(await file.arrayBuffer()), { contentType: file.type, cacheControl: "3600", upsert: false });
+    .upload(path, bytes, { contentType: type, cacheControl: "3600", upsert: false });
   if (uploadError) throw new Error(uploadError.message || "Failed to upload photo.");
 
   const { error } = await supabaseAdmin

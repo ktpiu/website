@@ -12,8 +12,12 @@ export type Election = {
   id: string;
   name: string;
   phase: ElectionPhase;
+  /** When candidate materials are due. Candidates and managers only. */
   submission_deadline: string;
-  max_positions_per_candidate: number;
+  /** When the election is planned to happen; what general members see. */
+  election_date: string | null;
+  /** Voters must enter the code shown in the room. */
+  require_join_code: boolean;
   candidates_finalized_at: string | null;
   created_at: string;
   updated_at: string;
@@ -25,17 +29,23 @@ export type ElectionPosition = {
   election_id: string;
   role_id: string | null;
   title: string;
+  /** How many winners this position has. */
+  seats: number;
   sort_order: number;
   created_at: string;
 };
 
-/** An exec or director role that can be put on the ballot. */
+/** A role that can be put on the ballot. */
 export type BallotRole = {
   id: string;
   name: string;
-  type: "exec" | "director";
+  group: "exec" | "director" | "standards";
   priority: number;
 };
+
+/** The Standards Board is a general role, matched by name like its permissions. */
+export const STANDARDS_ROLE_NAME = "Standards Board";
+export const MAX_SEATS = 20;
 
 export type CandidacyStatus =
   | "pending"
@@ -86,8 +96,6 @@ export const CANDIDACY_STATUS_LABELS: Record<CandidacyStatus, string> = {
   declined: "Declined seat",
 };
 
-export const MAX_POSITIONS_LIMIT = 5;
-
 export const STAGE_LABELS: Record<ElectionStage, string> = {
   setup: "Setup",
   applications: "Applications open",
@@ -103,11 +111,6 @@ export function electionStage(
 ): ElectionStage {
   if (election.phase !== "campaign") return election.phase;
   return new Date(election.submission_deadline) <= now ? "review" : "submissions";
-}
-
-/** The positions-per-candidate limit can change until candidates are finalized. */
-export function positionsLocked(election: Pick<Election, "candidates_finalized_at">) {
-  return election.candidates_finalized_at !== null;
 }
 
 /** A seat added after candidates were finalized, so it gets its own campaigners. */
@@ -157,12 +160,15 @@ export type CandidateMaterials = {
 
 export type MaterialsCheck = { label: string; done: boolean; optional?: boolean };
 
-/** The four required tasks (plus the optional one), as a checklist. */
+/**
+ * The required tasks (plus the optional one), as a checklist. The transcript
+ * comes with the application, so it's only a task for campaigners added by hand.
+ */
 export function materialsChecklist(m: Pick<CandidateMaterials, "intro" | "awards" | "has_transcript" | "photos" | "seats">): MaterialsCheck[] {
   return [
     { label: "Written introduction", done: wordCount(m.intro) > 0 && wordCount(m.intro) <= INTRO_MAX_WORDS },
     { label: "Initiative video for each position", done: m.seats.length > 0 && m.seats.every((s) => Boolean(s.video_url)) },
-    { label: "Unofficial IU transcript", done: m.has_transcript },
+    ...(m.has_transcript ? [] : [{ label: "Unofficial IU transcript", done: false }]),
     { label: "At least one photo", done: m.photos.length > 0 },
     { label: "Awards, projects or employment", done: m.awards.trim().length > 0, optional: true },
   ];
@@ -187,6 +193,8 @@ export type BallotCandidate = {
   avatar: string | null;
   is_me: boolean;
   seats: Array<{ position_id: string; title: string }>;
+  /** Approved endorsements. Stays 0 until registration closes. */
+  endorsement_count: number;
   my_endorsement: MyEndorsement | null;
 };
 
@@ -208,9 +216,9 @@ export const ENDORSEMENT_STATUS_LABELS: Record<EndorsementStatus, string> = {
   rejected: "Not approved",
 };
 
-/** Endorsements open when candidates are finalized and close when voting starts. */
-export function endorsementsOpen(election: Pick<Election, "phase" | "candidates_finalized_at">) {
-  return election.phase === "campaign" && election.candidates_finalized_at !== null;
+/** Members can endorse approved candidates from registration until voting starts. */
+export function endorsementsOpen(election: Pick<Election, "phase">) {
+  return election.phase === "applications" || election.phase === "campaign";
 }
 
 /** Statuses of a seat a finalized candidate is still (or was) running for. */
@@ -222,6 +230,8 @@ export type CandidateProfile = {
   name: string;
   avatar: string | null;
   is_me: boolean;
+  /** False until materials open for review; intro, awards, photos and videos are then empty. */
+  materials_visible: boolean;
   intro: string;
   awards: string;
   photos: CandidatePhoto[];
@@ -252,6 +262,8 @@ export type RoundSummary = {
   position_id: string;
   kind: RoundKind;
   status: "open" | "closed" | "tied";
+  /** How many winners this round picks. */
+  seats: number;
   opened_at: string;
   closed_at: string | null;
   ballots_cast: number;
@@ -267,7 +279,8 @@ export type SeatResult = {
   /** Null until the seat's first vote closes. */
   status: ResultStatus | null;
   resolution: "outright" | "runner_up" | "runoff" | "revote" | null;
-  winner: VotingChoice | null;
+  seats: number;
+  winners: VotingChoice[];
   tied: VotingChoice[];
 };
 
@@ -278,13 +291,16 @@ export type PendingSelection = {
   seats: Array<{ candidacy_id: string; position_id: string; title: string }>;
 };
 
+export type OpenRound = RoundSummary & { title: string; choices: VotingChoice[] };
+
 /** Everything the voting screens share. Nothing in it links a voter to a choice. */
 export type VotingState = {
   election: Election;
   positions: ElectionPosition[];
   results: SeatResult[];
   rounds: RoundSummary[];
-  open_round: (RoundSummary & { title: string; choices: VotingChoice[] }) | null;
+  /** Every race on the ballot right now, in ballot order. */
+  open_rounds: OpenRound[];
   admitted_count: number;
   pending_selections: PendingSelection[];
 };
@@ -297,7 +313,8 @@ export type ManagerVotingState = VotingState & {
 };
 
 export type MemberVotingState = VotingState & {
-  me: { admitted: boolean; has_voted: boolean; selection: PendingSelection | null };
+  /** pending_round_ids are the open races this member hasn't voted in yet. */
+  me: { admitted: boolean; pending_round_ids: string[]; selection: PendingSelection | null };
 };
 
 export const RESULT_STATUS_LABELS: Record<ResultStatus, string> = {

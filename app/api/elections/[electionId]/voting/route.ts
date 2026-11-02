@@ -58,7 +58,7 @@ async function setPhase(context: AppAuthContext, electionId: string, patch: Reco
 
 /**
  * Runs chapter voting. `action` is one of: start, rotate_code, admit,
- * remove, open_round, record_paper, close_round, select_seat, close.
+ * remove, open_round, record_paper, close_voting, select_seat, close.
  */
 export async function POST(request: Request, { params }: Params) {
   try {
@@ -71,16 +71,16 @@ export async function POST(request: Request, { params }: Params) {
 
     switch (body.action) {
       case "start": {
-        if (election.phase !== "campaign") throw new RushError(409, "Finalize candidates before starting voting.");
-        await setPhase(context, electionId, {
-          phase: "voting",
-          voting_join_code: newJoinCode(),
-          voting_join_code_set_at: new Date().toISOString(),
+        await electionRpc("election_start_voting", {
+          p_election_id: electionId,
+          p_join_code: election.require_join_code ? newJoinCode() : null,
+          p_user_id: actor,
         });
         break;
       }
       case "rotate_code": {
         if (election.phase !== "voting") throw new RushError(409, "Voting hasn't started.");
+        if (!election.require_join_code) throw new RushError(409, "This election doesn't use a join code.");
         await setPhase(context, electionId, {
           voting_join_code: newJoinCode(),
           voting_join_code_set_at: new Date().toISOString(),
@@ -130,8 +130,8 @@ export async function POST(request: Request, { params }: Params) {
         await electionRpc("election_record_paper_counts", { p_round_id: str(body.roundId, 64), p_counts: counts });
         break;
       }
-      case "close_round": {
-        await electionRpc("election_close_round", { p_round_id: str(body.roundId, 64), p_user_id: actor });
+      case "close_voting": {
+        await electionRpc("election_close_voting", { p_election_id: electionId, p_user_id: actor });
         break;
       }
       case "select_seat": {
@@ -145,7 +145,7 @@ export async function POST(request: Request, { params }: Params) {
       case "close": {
         if (election.phase !== "voting") throw new RushError(409, "Voting hasn't started.");
         const { state, candidacies } = await buildVotingState(election);
-        if (state.open_round) throw new RushError(409, "Close the open vote first.");
+        if (state.open_rounds.length > 0) throw new RushError(409, "Close voting first.");
         // A seat nobody ran for stays vacant rather than blocking the close.
         const contested = new Set(candidacies.map((c) => c.position_id));
         const unsettled = state.results.filter(

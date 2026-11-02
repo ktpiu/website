@@ -11,7 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { NativeSelect } from "@/components/rush/native-select";
+import { PeopleSelector } from "@/components/ui/people-selector";
 import { ResultsList } from "@/components/member-portal/elections/results-list";
 import { useElectionBroadcast } from "@/hooks/use-rush-realtime";
 import { errorMessage, rushFetch } from "@/lib/rush/client";
@@ -23,9 +23,9 @@ import {
 } from "@/lib/elections/types";
 
 /**
- * Chapter voting controls: start voting, the join code, who's admitted, one
- * vote per seat (with paper ballots), ties and runoffs, seat choices for
- * double winners, re-votes, and closing the election.
+ * Voting controls: start voting (every race opens together), the join code,
+ * who's admitted, paper ballots, closing voting, ties and runoffs, seat choices
+ * for double winners, re-votes, and closing the election.
  */
 export function VotingPanel({ election }: { election: Election }) {
   const queryClient = useQueryClient();
@@ -46,8 +46,9 @@ export function VotingPanel({ election }: { election: Election }) {
   });
 
   const [busy, setBusy] = useState(false);
-  const [paper, setPaper] = useState<Record<string, string>>({});
-  const [admitId, setAdmitId] = useState("");
+  // Keyed by round, then choice.
+  const [paper, setPaper] = useState<Record<string, Record<string, string>>>({});
+  const [admitId, setAdmitId] = useState<string[]>([]);
 
   const act = async (json: Record<string, unknown>, success?: string) => {
     setBusy(true);
@@ -77,7 +78,8 @@ export function VotingPanel({ election }: { election: Election }) {
         <CardHeader>
           <CardTitle className="text-base">Voting</CardTitle>
           <CardDescription>
-            Starting voting locks materials and endorsements and shows a join code for the projector.
+            Starting voting opens every position at once and locks materials and endorsements.
+            {election.require_join_code ? " Voters join with a code shown on the projector." : " Any active member can vote from anywhere."}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -85,8 +87,8 @@ export function VotingPanel({ election }: { election: Election }) {
             disabled={busy}
             onClick={() => {
               const warning = early
-                ? "The submission deadline hasn't passed yet, so members haven't had their review period. Start voting anyway?"
-                : "Start voting? Materials and endorsements lock.";
+                ? "The materials deadline hasn't passed yet, so members haven't had their review period. Start voting anyway?"
+                : "Start voting for every position? Materials and endorsements lock.";
               if (window.confirm(warning)) void act({ action: "start" }, "Voting started.");
             }}
           >
@@ -100,7 +102,10 @@ export function VotingPanel({ election }: { election: Election }) {
   if (query.isPending || !query.data) return <Skeleton className="h-48" />;
   const v = query.data;
   const live = election.phase === "voting";
-  const open = v.open_round;
+  const open = v.open_rounds;
+  const usesCode = v.election.require_join_code;
+  const openPositions = new Set(open.map((r) => r.position_id));
+  const contested = new Set(v.candidacies.map((c) => c.position_id));
   const admitted = v.participants.filter((p) => p.status === "admitted");
   const participantIds = new Set(admitted.map((p) => p.user_id));
   const addable = (members.data?.members ?? []).filter((m) => !participantIds.has(m.id));
@@ -114,7 +119,7 @@ export function VotingPanel({ election }: { election: Election }) {
           <CardTitle className="text-base">Voting</CardTitle>
           <CardDescription>
             {live
-              ? "Votes are final and secret: nobody can see who voted for whom. Counts appear when a vote closes."
+              ? "Votes are final and secret: nobody can see who voted for whom. Counts appear when voting closes."
               : "This election is closed."}
           </CardDescription>
         </div>
@@ -127,7 +132,7 @@ export function VotingPanel({ election }: { election: Election }) {
         ) : null}
       </CardHeader>
       <CardContent className="space-y-6">
-        {live ? (
+        {live && usesCode ? (
           <div className="flex flex-wrap items-center gap-4 rounded-lg border p-3">
             <div>
               <p className="text-xs text-muted-foreground">Join code</p>
@@ -143,63 +148,72 @@ export function VotingPanel({ election }: { election: Election }) {
           </div>
         ) : null}
 
-        {live && open ? (
-          <div className="space-y-3 rounded-lg border border-primary/40 p-3">
+        {live && open.length > 0 ? (
+          <div className="space-y-4 rounded-lg border border-primary/40 p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="font-medium">Voting now: {open.title}</p>
-              <Badge>
-                {open.ballots_cast} of {v.admitted_count} ballots in
-              </Badge>
-            </div>
-            <div className="space-y-2">
-              <Label className="text-xs">Paper ballots (hand-counted)</Label>
-              <div className="grid gap-2 sm:grid-cols-2">
-                {[...open.choices.map((c) => ({ choice: c.candidacy_id, label: c.name })), { choice: "abstain", label: "Abstain" }].map(
-                  (c) => (
-                    <label key={c.choice} className="flex items-center gap-2 text-sm">
-                      <Input
-                        className="w-20"
-                        type="number"
-                        min={0}
-                        inputMode="numeric"
-                        value={paper[c.choice] ?? ""}
-                        placeholder="0"
-                        onChange={(e) => setPaper((p) => ({ ...p, [c.choice]: e.target.value }))}
-                      />
-                      {c.label}
-                    </label>
-                  ),
-                )}
-              </div>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy}
-                onClick={() =>
-                  act(
-                    {
-                      action: "record_paper",
-                      roundId: open.id,
-                      counts: Object.fromEntries(Object.entries(paper).map(([k, n]) => [k, Number(n || 0)])),
-                    },
-                    "Paper ballots saved.",
-                  )
-                }
-              >
-                Save paper ballots
-              </Button>
-            </div>
-            <div className="flex justify-end">
+              <p className="font-medium">Voting now</p>
               <Button
                 disabled={busy}
                 onClick={async () => {
-                  if (!window.confirm(`Close voting for ${open.title}? Results show right away.`)) return;
-                  if (await act({ action: "close_round", roundId: open.id }, "Vote closed.")) setPaper({});
+                  if (!window.confirm("Close voting for every open position? Results show right away.")) return;
+                  if (await act({ action: "close_voting" }, "Voting closed.")) setPaper({});
                 }}
               >
-                Close vote
+                Close voting
               </Button>
             </div>
+            {open.map((round) => (
+              <div key={round.id} className="space-y-2 border-t pt-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-medium">
+                    {round.title}
+                    {round.seats > 1 ? ` (${round.seats} seats)` : ""}
+                  </p>
+                  <Badge variant="secondary">
+                    {round.ballots_cast}
+                    {usesCode ? ` of ${v.admitted_count}` : ""} ballots in
+                  </Badge>
+                </div>
+                <Label className="text-xs">Paper ballots (hand-counted)</Label>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {[...round.choices.map((c) => ({ choice: c.candidacy_id, label: c.name })), { choice: "abstain", label: "Abstain" }].map(
+                    (c) => (
+                      <label key={c.choice} className="flex items-center gap-2 text-sm">
+                        <Input
+                          className="w-20"
+                          type="number"
+                          min={0}
+                          inputMode="numeric"
+                          value={paper[round.id]?.[c.choice] ?? ""}
+                          placeholder="0"
+                          onChange={(e) =>
+                            setPaper((p) => ({ ...p, [round.id]: { ...p[round.id], [c.choice]: e.target.value } }))
+                          }
+                        />
+                        {c.label}
+                      </label>
+                    ),
+                  )}
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() =>
+                    act(
+                      {
+                        action: "record_paper",
+                        roundId: round.id,
+                        counts: Object.fromEntries(Object.entries(paper[round.id] ?? {}).map(([k, n]) => [k, Number(n || 0)])),
+                      },
+                      "Paper ballots saved.",
+                    )
+                  }
+                >
+                  Save paper ballots
+                </Button>
+              </div>
+            ))}
           </div>
         ) : null}
 
@@ -245,12 +259,12 @@ export function VotingPanel({ election }: { election: Election }) {
                   <li key={r.position_id} className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
                     <span className="min-w-0 flex-1 font-medium">{r.title}</span>
                     {r.status ? <Badge variant="outline">{RESULT_STATUS_LABELS[r.status]}</Badge> : null}
-                    {!open && !r.status && !hasRound ? (
+                    {!r.status && !hasRound && contested.has(r.position_id) ? (
                       <Button size="sm" disabled={busy} onClick={() => act({ action: "open_round", positionId: r.position_id }, `Voting open: ${r.title}.`)}>
                         Open vote
                       </Button>
                     ) : null}
-                    {!open && r.status === "tied" ? (
+                    {!openPositions.has(r.position_id) && r.status === "tied" ? (
                       <Button
                         size="sm"
                         disabled={busy}
@@ -259,7 +273,7 @@ export function VotingPanel({ election }: { election: Election }) {
                         Start runoff
                       </Button>
                     ) : null}
-                    {!open && declinedPositions.has(r.position_id) && r.status !== "tied" && r.resolution !== "revote" ? (
+                    {!openPositions.has(r.position_id) && r.seats === 1 && declinedPositions.has(r.position_id) && r.status !== "tied" && r.resolution !== "revote" ? (
                       <Button
                         size="sm"
                         variant="outline"
@@ -296,24 +310,25 @@ export function VotingPanel({ election }: { election: Election }) {
           </div>
         ) : null}
 
-        {live ? (
+        {live && usesCode ? (
           <div className="space-y-2">
             <p className="text-sm font-medium">Admitted voters ({admitted.length})</p>
             <div className="flex flex-wrap items-end gap-2">
-              <NativeSelect className="w-64" value={admitId} onChange={(e) => setAdmitId(e.target.value)} aria-label="Member to admit">
-                <option value="">Admit someone by hand</option>
-                {addable.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}
-                  </option>
-                ))}
-              </NativeSelect>
+              <div className="w-64">
+                <PeopleSelector
+                  options={addable.map((m) => ({ key: m.id, name: m.name }))}
+                  value={admitId}
+                  onChange={setAdmitId}
+                  loading={members.isPending}
+                  placeholder="Admit someone by hand"
+                />
+              </div>
               <Button
                 size="sm"
                 variant="outline"
-                disabled={busy || !admitId}
+                disabled={busy || admitId.length === 0}
                 onClick={async () => {
-                  if (await act({ action: "admit", userId: admitId }, "Admitted.")) setAdmitId("");
+                  if (await act({ action: "admit", userId: admitId[0] }, "Admitted.")) setAdmitId([]);
                 }}
               >
                 Admit

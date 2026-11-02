@@ -17,35 +17,32 @@ async function requireVoting() {
 async function memberState(election: Election, context: AppAuthContext): Promise<MemberVotingState> {
   const userId = context.appUser.id;
   const { state } = await buildVotingState(election);
-  const [participant, receipt] = await Promise.all([
+  const openIds = state.open_rounds.map((r) => r.id);
+  const [participant, receipts] = await Promise.all([
     supabaseAdmin
       .from("election_participants")
       .select("status")
       .eq("election_id", election.id)
       .eq("user_id", userId)
       .maybeSingle(),
-    state.open_round
-      ? supabaseAdmin
-          .from("election_vote_receipts")
-          .select("user_id")
-          .eq("round_id", state.open_round.id)
-          .eq("user_id", userId)
-          .maybeSingle()
-      : Promise.resolve({ data: null, error: null }),
+    openIds.length
+      ? supabaseAdmin.from("election_vote_receipts").select("round_id").in("round_id", openIds).eq("user_id", userId)
+      : Promise.resolve({ data: [], error: null }),
   ]);
   if (participant.error) throw participant.error;
-  if (receipt.error) throw receipt.error;
+  if (receipts.error) throw receipts.error;
+  const voted = new Set(((receipts.data ?? []) as Array<{ round_id: string }>).map((r) => r.round_id));
   return {
     ...state,
     me: {
-      admitted: participant.data?.status === "admitted",
-      has_voted: Boolean(receipt.data),
+      admitted: !election.require_join_code || participant.data?.status === "admitted",
+      pending_round_ids: openIds.filter((id) => !voted.has(id)),
       selection: state.pending_selections.find((s) => s.user_id === userId) ?? null,
     },
   };
 }
 
-/** The phone ballot: the open vote, whether you've voted, and results so far. */
+/** The ballot: the open races, which you still have to vote in, and results so far. */
 export async function GET() {
   try {
     const context = await requireAppAuthContext();
@@ -59,8 +56,8 @@ export async function GET() {
 }
 
 /**
- * `join` with the code on the projector, `vote` in the open round (final
- * once cast), or `select_seat` when you've won two seats.
+ * `join` with the code on the projector, `vote` with one ballot covering every
+ * open race (final once cast), or `select_seat` when you've won two seats.
  */
 export async function POST(request: Request) {
   try {
@@ -72,6 +69,7 @@ export async function POST(request: Request) {
 
     switch (body.action) {
       case "join": {
+        if (!election.require_join_code) break;
         rateLimit(`election-join:${userId}`, 10, 60_000);
         const { data, error } = await supabaseAdmin
           .from("elections")
@@ -102,12 +100,13 @@ export async function POST(request: Request) {
         break;
       }
       case "vote": {
-        const choice = str(body.choice, 64);
-        if (!choice) throw new RushError(400, "Choose a candidate or abstain.");
-        await electionRpc("election_cast_vote", {
-          p_round_id: str(body.roundId, 64),
+        if (!body.votes || typeof body.votes !== "object" || Array.isArray(body.votes)) {
+          throw new RushError(400, "Choose a candidate or abstain for each position.");
+        }
+        await electionRpc("election_cast_ballot", {
+          p_election_id: election.id,
           p_user_id: userId,
-          p_choice: choice,
+          p_votes: body.votes,
         });
         break;
       }

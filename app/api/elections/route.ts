@@ -4,9 +4,11 @@ import { assertElectionsManagePermission, requireAppAuthContext } from "@/lib/se
 import { readJson, RushError, rushErrorResponse, str } from "@/lib/rush/server";
 import {
   getBallotRoles,
+  assertDatesInOrder,
   parseDeadline,
-  parseMaxPositions,
+  parseElectionDate,
   parseRoleIds,
+  parseSeats,
   syncPositions,
 } from "@/lib/elections/server";
 
@@ -38,7 +40,8 @@ export async function POST(request: Request) {
     const name = str(body.name, 120);
     if (!name) throw new RushError(400, "Name the election.");
     const deadline = parseDeadline(body.submissionDeadline);
-    const maxPositions = parseMaxPositions(body.maxPositionsPerCandidate ?? 2);
+    const electionDate = parseElectionDate(body.electionDate);
+    assertDatesInOrder(deadline, electionDate);
     const roleIds = parseRoleIds(body.roleIds);
 
     const { data, error } = await supabaseAdmin
@@ -46,7 +49,8 @@ export async function POST(request: Request) {
       .insert({
         name,
         submission_deadline: deadline,
-        max_positions_per_candidate: maxPositions,
+        election_date: electionDate,
+        require_join_code: body.requireJoinCode !== false,
         created_by: context.appUser.id,
         updated_by: context.appUser.id,
       })
@@ -55,7 +59,7 @@ export async function POST(request: Request) {
     if (error) throw error;
 
     try {
-      await syncPositions(data.id, roleIds);
+      await syncPositions(data.id, roleIds, parseSeats(body.seats));
     } catch (positionsError) {
       await supabaseAdmin.from("elections").delete().eq("id", data.id);
       throw positionsError;

@@ -3,12 +3,12 @@ import { supabaseAdmin } from "@/lib/supabase-admin";
 import { assertElectionsManagePermission, requireAppAuthContext } from "@/lib/server-auth";
 import { readJson, RushError, rushErrorResponse, str } from "@/lib/rush/server";
 import {
+  assertDatesInOrder,
   getElection,
   getPositions,
   parseDeadline,
-  parseMaxPositions,
+  parseElectionDate,
 } from "@/lib/elections/server";
-import { positionsLocked } from "@/lib/elections/types";
 
 export const dynamic = "force-dynamic";
 
@@ -27,7 +27,7 @@ export async function GET(_request: Request, { params }: Params) {
 }
 
 /**
- * Edits the settings (name, deadline, positions per candidate) and opens
+ * Edits the settings (name, materials deadline, election date, join code) and opens
  * applications. Later phases have their own actions.
  */
 export async function PATCH(request: Request, { params }: Params) {
@@ -46,11 +46,14 @@ export async function PATCH(request: Request, { params }: Params) {
       patch.name = name;
     }
     if ("submissionDeadline" in body) patch.submission_deadline = parseDeadline(body.submissionDeadline);
-    if ("maxPositionsPerCandidate" in body) {
-      if (positionsLocked(election)) {
-        throw new RushError(409, "Candidates are finalized, so the positions limit is locked.");
-      }
-      patch.max_positions_per_candidate = parseMaxPositions(body.maxPositionsPerCandidate);
+    if ("electionDate" in body) patch.election_date = parseElectionDate(body.electionDate);
+    assertDatesInOrder(
+      (patch.submission_deadline as string | undefined) ?? election.submission_deadline,
+      (patch.election_date as string | undefined) ?? election.election_date,
+    );
+    if ("requireJoinCode" in body && Boolean(body.requireJoinCode) !== election.require_join_code) {
+      if (election.phase === "voting") throw new RushError(409, "Voting has started, so the join code setting is locked.");
+      patch.require_join_code = Boolean(body.requireJoinCode);
     }
     if (body.phase === "applications") {
       if (election.phase !== "setup") throw new RushError(409, "Applications can only open from setup.");

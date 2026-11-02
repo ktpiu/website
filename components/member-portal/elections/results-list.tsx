@@ -18,12 +18,13 @@ const RESOLUTION_NOTES: Partial<Record<NonNullable<SeatResult["resolution"]>, st
 /** Vote counts for one closed round, most votes first, abstentions last. */
 export function RoundTallies({ round, large = false }: { round: RoundSummary; large?: boolean }) {
   if (!round.tallies) return null;
-  const top = Math.max(0, ...round.tallies.filter((t) => t.choice !== "abstain").map((t) => t.votes));
+  const counts = round.tallies.filter((t) => t.choice !== "abstain").map((t) => t.votes);
+  const cut = counts.sort((a, b) => b - a)[round.seats - 1] ?? 0;
   return (
     <ul className={cn("space-y-1", large ? "text-2xl" : "text-sm")}>
       {round.tallies.map((t) => (
         <li key={t.choice} className="flex items-center justify-between gap-3">
-          <span className={cn(t.choice === "abstain" && "text-muted-foreground", t.choice !== "abstain" && t.votes === top && top > 0 && "font-semibold")}>
+          <span className={cn(t.choice === "abstain" && "text-muted-foreground", t.choice !== "abstain" && t.votes >= cut && cut > 0 && "font-semibold")}>
             {t.label}
           </span>
           <span className="tabular-nums">
@@ -54,11 +55,13 @@ export function ResultsList({ results, rounds }: { results: SeatResult[]; rounds
                 </Badge>
               ) : null}
             </div>
-            {result.winner ? (
+            {result.winners.length > 0 ? (
               <p className="text-sm">
-                Winner: <span className="font-semibold">{result.winner.name}</span>
+                {result.winners.length > 1 ? "Winners" : "Winner"}:{" "}
+                <span className="font-semibold">{result.winners.map((w) => w.name).join(", ")}</span>
               </p>
-            ) : result.status === "tied" ? (
+            ) : null}
+            {result.status === "tied" ? (
               <p className="text-sm">Tied: {result.tied.map((t) => t.name).join(", ")}</p>
             ) : null}
             {result.resolution && RESOLUTION_NOTES[result.resolution] ? (

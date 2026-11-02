@@ -29,6 +29,15 @@ export const PHOTO_TYPES: Record<string, string> = {
 
 export const PHOTO_ACCEPT = Object.keys(PHOTO_TYPES).join(",");
 
+/** The real image type from a file's first bytes; the browser-reported type is client-controlled. */
+export function sniffPhotoType(bytes: Uint8Array): string | null {
+  const ascii = (start: number, end: number) => String.fromCharCode(...bytes.subarray(start, end));
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (ascii(1, 4) === "PNG" && bytes[0] === 0x89) return "image/png";
+  if (ascii(0, 4) === "RIFF" && ascii(8, 12) === "WEBP") return "image/webp";
+  return null;
+}
+
 export function validatePhotoFile(file: { type: string; size: number }): string | null {
   if (!PHOTO_TYPES[file.type]) return "Photos must be a JPEG, PNG or WebP image.";
   if (file.size === 0) return "The selected file is empty.";

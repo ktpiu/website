@@ -5,6 +5,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { CheckCircle2, Circle, FileText, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from "@/components/ui/carousel";
+import { Dropzone } from "@/components/ui/dropzone";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -12,8 +14,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { errorMessage, formatDateTime, rushFetch } from "@/lib/rush/client";
 import {
   MAX_PHOTOS,
-  PHOTO_ACCEPT,
-  TRANSCRIPT_ACCEPT,
   validatePhotoFile,
   validateTranscriptFile,
 } from "@/lib/elections/uploads";
@@ -36,9 +36,11 @@ function toDraft(m: CandidateMaterials): Draft {
 }
 
 /**
- * Campaign materials (Tasks 1-4 and the optional one) for one candidate. The
- * candidate uses it on Run for Office; election managers open it from the
- * Candidates card to fill in or fix materials for them.
+ * Campaign materials (the required tasks and the optional one) for one
+ * candidate. The candidate uses it on the Elections page; election managers
+ * open it from the Candidates card to fill in or fix materials for them. The
+ * transcript comes with the application, so candidates only see it here when
+ * none is on file.
  */
 export function MaterialsEditor({ candidateId, forManager = false }: { candidateId: string; forManager?: boolean }) {
   const queryClient = useQueryClient();
@@ -104,16 +106,28 @@ export function MaterialsEditor({ candidateId, forManager = false }: { candidate
     }, "Materials saved.");
   };
 
-  const uploadPhoto = (file: File | undefined) => {
-    if (!file) return;
-    const problem = validatePhotoFile(file);
-    if (problem) return toast.error(problem);
-    const form = new FormData();
-    form.set("photo", file);
-    void withBusy(
-      () => rushFetch(`/api/elections/candidates/${candidateId}/photos`, { method: "POST", body: form }),
-      "Photo added.",
-    );
+  const uploadPhotos = async (files: File[]) => {
+    const room = MAX_PHOTOS - materials.photos.length;
+    if (files.length > room) toast.error(`You can add ${room} more photo${room === 1 ? "" : "s"}.`);
+    setBusy(true);
+    // One request per photo: each only has to fit under the body size cap.
+    for (const file of files.slice(0, room)) {
+      const problem = validatePhotoFile(file);
+      if (problem) {
+        toast.error(`${file.name}: ${problem}`);
+        continue;
+      }
+      const form = new FormData();
+      form.set("photo", file);
+      try {
+        await rushFetch(`/api/elections/candidates/${candidateId}/photos`, { method: "POST", body: form });
+        await queryClient.invalidateQueries({ queryKey: key });
+      } catch (error) {
+        toast.error(`${file.name}: ${errorMessage(error)}`);
+      }
+    }
+    setBusy(false);
+    refresh();
   };
 
   const removePhoto = (photoId: string) =>
@@ -122,8 +136,7 @@ export function MaterialsEditor({ candidateId, forManager = false }: { candidate
       "Photo removed.",
     );
 
-  const uploadTranscript = (file: File | undefined) => {
-    if (!file) return;
+  const uploadTranscript = (file: File) => {
     const problem = validateTranscriptFile(file);
     if (problem) return toast.error(problem);
     const form = new FormData();
@@ -163,7 +176,7 @@ export function MaterialsEditor({ candidateId, forManager = false }: { candidate
       </div>
 
       <div className="space-y-1.5">
-        <Label htmlFor={`intro-${candidateId}`}>1. Written introduction</Label>
+        <Label htmlFor={`intro-${candidateId}`}>Written introduction</Label>
         <p className="text-xs text-muted-foreground">
           {forManager ? "Their" : "Your"} background and potential role in KTP.
         </p>
@@ -180,7 +193,7 @@ export function MaterialsEditor({ candidateId, forManager = false }: { candidate
       </div>
 
       <div className="space-y-2">
-        <Label>2. Initiative video</Label>
+        <Label>Initiative video</Label>
         <p className="text-xs text-muted-foreground">
           Future initiatives for the role and why {forManager ? "they're" : "you're"} the best candidate. Up to 15
           minutes. Paste a YouTube (unlisted is fine) or Google Drive link that anyone in KTP can open.
@@ -207,75 +220,86 @@ export function MaterialsEditor({ candidateId, forManager = false }: { candidate
         )}
       </div>
 
-      <div className="space-y-2">
-        <Label>3. Unofficial IU transcript</Label>
-        <div className="flex flex-wrap items-center gap-3 text-sm">
-          <FileText className="h-4 w-4 text-muted-foreground" />
-          {materials.has_transcript ? (
-            <a
-              className="underline underline-offset-4"
-              href={`/api/elections/candidates/${candidateId}/transcript`}
-              target="_blank"
-              rel="noreferrer"
-            >
-              View transcript
-            </a>
-          ) : (
-            <span className="text-muted-foreground">Not uploaded yet</span>
-          )}
+      {forManager || !materials.has_transcript ? (
+        <div className="space-y-2">
+          <Label>Unofficial IU transcript</Label>
+          <div className="flex flex-wrap items-center gap-3 text-sm">
+            <FileText className="h-4 w-4 text-muted-foreground" />
+            {materials.has_transcript ? (
+              <a
+                className="underline underline-offset-4"
+                href={`/api/elections/candidates/${candidateId}/transcript`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                View transcript
+              </a>
+            ) : (
+              <span className="text-muted-foreground">Not uploaded yet</span>
+            )}
+          </div>
+          {editable ? (
+            <Dropzone
+              accept={{ "application/pdf": [".pdf"] }}
+              aria-label={materials.has_transcript ? "Replace transcript" : "Upload transcript"}
+              hint={`PDF, up to 4MB${materials.has_transcript ? ". Replaces the one on file." : ""}`}
+              rejectMessage="Transcripts must be a PDF."
+              disabled={busy}
+              onFiles={([file]) => uploadTranscript(file)}
+            />
+          ) : null}
+          <p className="text-xs text-muted-foreground">Only the candidate and the Standards Board can see it.</p>
         </div>
-        {editable ? (
-          <Input
-            type="file"
-            accept={TRANSCRIPT_ACCEPT}
-            aria-label={materials.has_transcript ? "Replace transcript" : "Upload transcript"}
-            disabled={busy}
-            onChange={(e) => {
-              uploadTranscript(e.target.files?.[0]);
-              e.target.value = "";
-            }}
-          />
-        ) : null}
-        <p className="text-xs text-muted-foreground">Only the candidate and the Standards Board can see it.</p>
-      </div>
+      ) : null}
 
       <div className="space-y-2">
-        <Label>4. Photos</Label>
+        <Label>Photos</Label>
         <p className="text-xs text-muted-foreground">At least 1, up to {MAX_PHOTOS}.</p>
-        <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
-          {materials.photos.map((photo) => (
-            <div key={photo.id} className="relative aspect-square overflow-hidden rounded-md border bg-muted">
-              {photo.url ? (
-                // Signed URLs from private storage; next/image would need the host configured.
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={photo.url} alt="" className="h-full w-full object-cover" />
-              ) : null}
-              {editable ? (
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="secondary"
-                  className="absolute right-1 top-1 h-7 w-7"
-                  aria-label="Remove photo"
-                  disabled={busy}
-                  onClick={() => removePhoto(photo.id)}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              ) : null}
-            </div>
-          ))}
-        </div>
+        {materials.photos.length > 0 ? (
+          <Carousel className="mx-auto w-full max-w-xs" opts={{ loop: materials.photos.length > 1 }}>
+            <CarouselContent>
+              {materials.photos.map((photo, index) => (
+                <CarouselItem key={photo.id}>
+                  <div className="relative aspect-square overflow-hidden rounded-lg border bg-muted">
+                    {photo.url ? (
+                      // Signed URLs from private storage; next/image would need the host configured.
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={photo.url} alt={`Photo ${index + 1}`} className="h-full w-full object-cover" />
+                    ) : null}
+                    {editable ? (
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="secondary"
+                        className="absolute right-2 top-2 h-8 w-8"
+                        aria-label={`Remove photo ${index + 1}`}
+                        disabled={busy}
+                        onClick={() => removePhoto(photo.id)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    ) : null}
+                  </div>
+                </CarouselItem>
+              ))}
+            </CarouselContent>
+            {materials.photos.length > 1 ? (
+              <>
+                <CarouselPrevious type="button" className="left-2" />
+                <CarouselNext type="button" className="right-2" />
+              </>
+            ) : null}
+          </Carousel>
+        ) : null}
         {editable && materials.photos.length < MAX_PHOTOS ? (
-          <Input
-            type="file"
-            accept={PHOTO_ACCEPT}
-            aria-label="Add a photo"
+          <Dropzone
+            multiple
+            accept={{ "image/jpeg": [".jpg", ".jpeg"], "image/png": [".png"], "image/webp": [".webp"] }}
+            aria-label="Add photos"
+            hint="JPEG, PNG or WebP, up to 4MB each"
+            rejectMessage="Photos must be a JPEG, PNG or WebP image."
             disabled={busy}
-            onChange={(e) => {
-              uploadPhoto(e.target.files?.[0]);
-              e.target.value = "";
-            }}
+            onFiles={(files) => void uploadPhotos(files)}
           />
         ) : null}
       </div>

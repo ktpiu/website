@@ -22,10 +22,14 @@ type BallotRow = {
 /**
  * Candidates on the ballot (any seat approved or since decided), in ballot
  * order, with the viewer's own endorsement of each. Nothing private: no
- * transcript, no other members' endorsements.
+ * transcript, and only a count of approved endorsements once `showEndorsements`.
  */
-export async function listBallotCandidates(electionId: string, viewerId: string): Promise<BallotCandidate[]> {
-  const [positions, candidates, mine] = await Promise.all([
+export async function listBallotCandidates(
+  electionId: string,
+  viewerId: string,
+  showEndorsements: boolean,
+): Promise<BallotCandidate[]> {
+  const [positions, candidates, mine, approved] = await Promise.all([
     getPositions(electionId),
     supabaseAdmin
       .from("election_candidates")
@@ -36,9 +40,22 @@ export async function listBallotCandidates(electionId: string, viewerId: string)
       .select("id, candidate_id, kind, body, video_url, status, election_candidates!inner(election_id)")
       .eq("author_user_id", viewerId)
       .eq("election_candidates.election_id", electionId),
+    showEndorsements
+      ? supabaseAdmin
+          .from("election_endorsements")
+          .select("candidate_id, election_candidates!inner(election_id)")
+          .eq("status", "approved")
+          .eq("election_candidates.election_id", electionId)
+      : Promise.resolve({ data: [], error: null }),
   ]);
   if (candidates.error) throw candidates.error;
   if (mine.error) throw mine.error;
+  if (approved.error) throw approved.error;
+
+  const endorsementCounts = new Map<string, number>();
+  for (const e of (approved.data ?? []) as unknown as Array<{ candidate_id: string }>) {
+    endorsementCounts.set(e.candidate_id, (endorsementCounts.get(e.candidate_id) ?? 0) + 1);
+  }
 
   const order = new Map(positions.map((p) => [p.id, p]));
   const myByCandidate = new Map(
@@ -60,6 +77,7 @@ export async function listBallotCandidates(electionId: string, viewerId: string)
         avatar: row.users?.avatar ?? null,
         is_me: row.user_id === viewerId,
         seats,
+        endorsement_count: endorsementCounts.get(row.id) ?? 0,
         my_endorsement: myByCandidate.get(row.id) ?? null,
       };
     })
