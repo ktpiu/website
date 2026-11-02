@@ -3,11 +3,18 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Ban, Check, FileText, FolderOpen, Lock, Plus, X } from "lucide-react";
+import { Ban, Check, FileText, FolderOpen, Lock, MoreVertical, Pencil, Plus, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
@@ -35,8 +42,9 @@ const STATUS_VARIANT: Partial<Record<Candidacy["status"], "default" | "secondary
 
 /**
  * Applications and campaigners for one election: approve or deny each seat
- * (denials need a reason the applicant sees), open transcripts, and add
- * campaigners by hand. Decisions lock when candidates are finalized.
+ * (denials need a reason the applicant sees), open transcripts, change a
+ * candidate's positions, and add campaigners by hand, with each candidate's
+ * actions in one menu. Decisions lock when candidates are finalized.
  */
 export function CandidatesPanel({
   election,
@@ -64,11 +72,14 @@ export function CandidatesPanel({
   } | null>(null);
   const [materialsFor, setMaterialsFor] = useState<{ id: string; name: string } | null>(null);
   const [adding, setAdding] = useState<{ userId: string; positionIds: Set<string> } | null>(null);
+  const [editing, setEditing] = useState<{ candidate: ManagedCandidate; positionIds: Set<string> } | null>(null);
   const [saving, setSaving] = useState(false);
 
   const editable = !election.candidates_finalized_at && (election.phase === "setup" || election.phase === "applications");
   // After finalize, approved candidacies can be voided until voting starts.
   const canVoid = Boolean(election.candidates_finalized_at) && election.phase === "campaign";
+  // Standards can move a candidate between positions until voting starts.
+  const canEditPositions = ["setup", "applications", "campaign"].includes(election.phase);
   // Finalized elections only take new campaigners for seats added since then.
   const lateSeats = positions.filter((p) => isLatePosition(election, p));
   const addableSeats = editable ? positions : election.phase === "closed" ? [] : lateSeats;
@@ -103,7 +114,7 @@ export function CandidatesPanel({
   };
 
   const finalize = async () => {
-    if (!window.confirm("Finalize candidates? Registration closes, the list locks, and members can see the final list and endorsements.")) return;
+    if (!window.confirm("Finalize candidates? Registration closes, the list locks, and members can see the final list and endorsements. Approved candidates can still submit materials until the deadline.")) return;
     setSaving(true);
     try {
       await rushFetch(`/api/elections/${election.id}/finalize`, { method: "POST" });
@@ -136,6 +147,33 @@ export function CandidatesPanel({
     }
   };
 
+  const startEditPositions = (candidate: ManagedCandidate) =>
+    setEditing({
+      candidate,
+      positionIds: new Set(
+        candidate.candidacies.filter((s) => s.status === "pending" || s.status === "approved").map((s) => s.position_id),
+      ),
+    });
+
+  const savePositions = async () => {
+    if (!editing) return;
+    if (editing.positionIds.size === 0) return toast.error("Choose at least one position.");
+    setSaving(true);
+    try {
+      await rushFetch(`/api/elections/${election.id}/candidates/${editing.candidate.id}`, {
+        method: "PUT",
+        json: { positionIds: Array.from(editing.positionIds) },
+      });
+      toast.success("Positions updated.");
+      setEditing(null);
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setSaving(false);
+      void queryClient.invalidateQueries({ queryKey: key });
+    }
+  };
+
   const candidateIds = new Set(list.map((c) => c.user.id));
   // Existing candidates can also run for a seat added later.
   const members = (candidates.data?.members ?? []).filter(
@@ -152,7 +190,7 @@ export function CandidatesPanel({
               ? pending.length > 0
                 ? `${pending.length} application${pending.length === 1 ? "" : "s"} waiting for a decision. Every one must be approved or denied before candidates are finalized.`
                 : "Approve or deny each position someone applies for. Campaigners you add are approved immediately."
-              : "Candidates are finalized."}
+              : "Candidates are finalized. Approved candidates can still submit materials until the deadline."}
           </CardDescription>
         </div>
         {addableSeats.length > 0 ? (
@@ -188,6 +226,13 @@ export function CandidatesPanel({
                 candidate.photo_count > 0,
               ];
               const requiredDone = required.filter(Boolean).length;
+              const decisions = seats.flatMap((seat) => {
+                const actions: Array<"approve" | "deny" | "void"> = [];
+                if (editable && ["pending", "denied"].includes(seat.status)) actions.push("approve");
+                if (editable && ["pending", "approved"].includes(seat.status)) actions.push("deny");
+                if (canVoid && seat.status === "approved") actions.push("void");
+                return actions.map((action) => ({ seat, action }));
+              });
               return (
                 <li key={candidate.id} className="space-y-2 px-3 py-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -197,68 +242,106 @@ export function CandidatesPanel({
                         {candidate.user.email} · {candidate.source === "manual" ? "Added by Standards" : "Applied"}
                       </p>
                     </div>
-                    <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex items-center gap-2">
                       {approvedSeats.length > 0 ? (
-                        <>
-                          <Badge variant={requiredDone === required.length ? "default" : "outline"}>
-                            {requiredDone}/{required.length} tasks
-                          </Badge>
-                          {election.phase !== "closed" ? (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => setMaterialsFor({ id: candidate.id, name: candidate.user.name })}
-                            >
-                              <FolderOpen className="mr-1.5 h-4 w-4" /> Materials
-                            </Button>
+                        <Badge variant={requiredDone === required.length ? "default" : "outline"}>
+                          {requiredDone}/{required.length} tasks
+                        </Badge>
+                      ) : null}
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="size-8"
+                            disabled={saving}
+                            aria-label={`Actions for ${candidate.user.name}`}
+                          >
+                            <MoreVertical className="size-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          {approvedSeats.length > 0 && election.phase !== "closed" ? (
+                            <DropdownMenuItem onSelect={() => setMaterialsFor({ id: candidate.id, name: candidate.user.name })}>
+                              <FolderOpen /> Materials
+                            </DropdownMenuItem>
                           ) : null}
-                        </>
-                      ) : null}
-                      {candidate.has_transcript ? (
-                        canViewTranscripts ? (
-                          <Button asChild size="sm" variant="ghost">
-                            <a href={`/api/elections/candidates/${candidate.id}/transcript`} target="_blank" rel="noreferrer">
-                              <FileText className="mr-1.5 h-4 w-4" /> Transcript
-                            </a>
-                          </Button>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">Transcript on file</span>
-                        )
-                      ) : (
-                        <span className="text-xs text-muted-foreground">No transcript yet</span>
-                      )}
-                      {editable && undecided.length > 1 ? (
-                        <>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={saving}
-                            onClick={() =>
-                              decide(
-                                undecided.map((s) => ({ candidacyId: s.id, status: "approved" })),
-                                `${candidate.user.name} approved.`,
-                              )
+                          {candidate.has_transcript && canViewTranscripts ? (
+                            <DropdownMenuItem asChild>
+                              <a href={`/api/elections/candidates/${candidate.id}/transcript`} target="_blank" rel="noreferrer">
+                                <FileText /> Transcript
+                              </a>
+                            </DropdownMenuItem>
+                          ) : (
+                            <DropdownMenuItem disabled>
+                              <FileText /> {candidate.has_transcript ? "Transcript on file" : "No transcript yet"}
+                            </DropdownMenuItem>
+                          )}
+                          {canEditPositions ? (
+                            <DropdownMenuItem onSelect={() => startEditPositions(candidate)}>
+                              <Pencil /> Edit positions
+                            </DropdownMenuItem>
+                          ) : null}
+                          {decisions.length > 0 ? <DropdownMenuSeparator /> : null}
+                          {editable && undecided.length > 1 ? (
+                            <>
+                              <DropdownMenuItem
+                                onSelect={() =>
+                                  decide(
+                                    undecided.map((s) => ({ candidacyId: s.id, status: "approved" })),
+                                    `${candidate.user.name} approved.`,
+                                  )
+                                }
+                              >
+                                <Check /> Approve all
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                variant="destructive"
+                                onSelect={() =>
+                                  setDenying({
+                                    candidacyIds: undecided.map((s) => s.id),
+                                    label: candidate.user.name,
+                                    reason: "",
+                                    status: "denied",
+                                  })
+                                }
+                              >
+                                <X /> Deny all
+                              </DropdownMenuItem>
+                            </>
+                          ) : null}
+                          {decisions.map(({ seat, action }) => {
+                            const title = positionTitle.get(seat.position_id) ?? "this position";
+                            if (action === "approve") {
+                              return (
+                                <DropdownMenuItem
+                                  key={`${seat.id}-approve`}
+                                  onSelect={() => decide([{ candidacyId: seat.id, status: "approved" }], "Approved.")}
+                                >
+                                  <Check /> Approve for {title}
+                                </DropdownMenuItem>
+                              );
                             }
-                          >
-                            Approve all
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={saving}
-                            onClick={() =>
-                              setDenying({
-                                candidacyIds: undecided.map((s) => s.id),
-                                label: candidate.user.name,
-                                reason: "",
-                                status: "denied",
-                              })
-                            }
-                          >
-                            Deny all
-                          </Button>
-                        </>
-                      ) : null}
+                            const status = action === "deny" ? "denied" : "voided";
+                            return (
+                              <DropdownMenuItem
+                                key={`${seat.id}-${action}`}
+                                variant="destructive"
+                                onSelect={() =>
+                                  setDenying({
+                                    candidacyIds: [seat.id],
+                                    label: `${candidate.user.name} for ${title}`,
+                                    reason: "",
+                                    status,
+                                  })
+                                }
+                              >
+                                {action === "deny" ? <X /> : <Ban />} {action === "deny" ? "Deny" : "Void"} for {title}
+                              </DropdownMenuItem>
+                            );
+                          })}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
                   </div>
                   <ul className="space-y-1.5">
@@ -266,53 +349,6 @@ export function CandidatesPanel({
                       <li key={seat.id} className="flex flex-wrap items-center gap-2 text-sm">
                         <span className="min-w-0 flex-1">{positionTitle.get(seat.position_id) ?? "Position"}</span>
                         <Badge variant={STATUS_VARIANT[seat.status] ?? "outline"}>{CANDIDACY_STATUS_LABELS[seat.status]}</Badge>
-                        {editable && ["pending", "denied"].includes(seat.status) ? (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            disabled={saving}
-                            aria-label={`Approve ${candidate.user.name} for ${positionTitle.get(seat.position_id)}`}
-                            onClick={() => decide([{ candidacyId: seat.id, status: "approved" }], "Approved.")}
-                          >
-                            <Check className="mr-1 h-4 w-4" /> Approve
-                          </Button>
-                        ) : null}
-                        {editable && ["pending", "approved"].includes(seat.status) ? (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            disabled={saving}
-                            aria-label={`Deny ${candidate.user.name} for ${positionTitle.get(seat.position_id)}`}
-                            onClick={() =>
-                              setDenying({
-                                candidacyIds: [seat.id],
-                                label: `${candidate.user.name} for ${positionTitle.get(seat.position_id) ?? "this position"}`,
-                                reason: "",
-                                status: "denied",
-                              })
-                            }
-                          >
-                            <X className="mr-1 h-4 w-4" /> Deny
-                          </Button>
-                        ) : null}
-                        {canVoid && seat.status === "approved" ? (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            disabled={saving}
-                            aria-label={`Void ${candidate.user.name} for ${positionTitle.get(seat.position_id)}`}
-                            onClick={() =>
-                              setDenying({
-                                candidacyIds: [seat.id],
-                                label: `${candidate.user.name} for ${positionTitle.get(seat.position_id) ?? "this position"}`,
-                                reason: "",
-                                status: "voided",
-                              })
-                            }
-                          >
-                            <Ban className="mr-1 h-4 w-4" /> Void
-                          </Button>
-                        ) : null}
                         {(seat.status === "denied" || seat.status === "voided") && seat.decision_reason ? (
                           <p className="w-full text-xs text-muted-foreground">Reason: {seat.decision_reason}</p>
                         ) : null}
@@ -369,6 +405,58 @@ export function CandidatesPanel({
             </DialogDescription>
           </DialogHeader>
           {materialsFor ? <MaterialsEditor candidateId={materialsFor.id} forManager /> : null}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={editing !== null} onOpenChange={(open) => !open && setEditing(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit {editing?.candidate.user.name}&apos;s positions</DialogTitle>
+            <DialogDescription>
+              Positions you add are approved right away. Removing a position permanently deletes its initiative video
+              and endorsements.
+            </DialogDescription>
+          </DialogHeader>
+          {editing ? (
+            <fieldset className="space-y-1.5">
+              <legend className="mb-1 text-sm font-medium">Positions</legend>
+              {positions.map((p) => {
+                const closed = editing.candidate.candidacies.find(
+                  (s) => s.position_id === p.id && s.status !== "pending" && s.status !== "approved",
+                );
+                return (
+                  <label key={p.id} className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={editing.positionIds.has(p.id)}
+                      disabled={Boolean(closed)}
+                      onChange={(e) =>
+                        setEditing((d) => {
+                          if (!d) return d;
+                          const next = new Set(d.positionIds);
+                          if (e.target.checked) next.add(p.id);
+                          else next.delete(p.id);
+                          return { ...d, positionIds: next };
+                        })
+                      }
+                    />
+                    {p.title}
+                    {closed ? (
+                      <span className="text-xs text-muted-foreground">({CANDIDACY_STATUS_LABELS[closed.status]})</span>
+                    ) : null}
+                  </label>
+                );
+              })}
+            </fieldset>
+          ) : null}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditing(null)}>
+              Cancel
+            </Button>
+            <Button onClick={savePositions} disabled={saving}>
+              Save
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
