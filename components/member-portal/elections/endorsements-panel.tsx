@@ -59,7 +59,7 @@ export function EndorsementsPanel({ election }: { election: Election }) {
           </CardDescription>
         </div>
         <NativeSelect
-          className="w-44"
+          className="w-56"
           value={filter}
           onChange={(e) => setFilter(e.target.value as EndorsementStatus)}
           aria-label="Show endorsements"

@@ -244,24 +244,21 @@ export default function ElectionManagePage() {
                     Open applications
                   </Button>
                 ) : null}
-                {election.phase !== "closed" ? (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() =>
-                      setEditing({
-                        name: election.name,
-                        submissionDeadline: isoToEasternInput(election.submission_deadline),
-                        electionDate: election.election_date ? isoToEasternInput(election.election_date) : "",
-                        requireJoinCode: election.require_join_code,
-                      })
-                    }
-                  >
-                    <Pencil className="mr-1.5 h-4 w-4" /> Edit
-                  </Button>
-                ) : null}
-                <Button size="sm" variant="outline" onClick={() => setDeleteName("")}>
-                  <Trash2 className="mr-1.5 h-4 w-4" /> Delete
+                <Button
+                  size="icon"
+                  variant="outline"
+                  className="size-8"
+                  aria-label="Edit election"
+                  onClick={() =>
+                    setEditing({
+                      name: election.name,
+                      submissionDeadline: isoToEasternInput(election.submission_deadline),
+                      electionDate: election.election_date ? isoToEasternInput(election.election_date) : "",
+                      requireJoinCode: election.require_join_code,
+                    })
+                  }
+                >
+                  <Pencil className="h-4 w-4" />
                 </Button>
               </div>
             </CardHeader>
@@ -347,7 +344,7 @@ export default function ElectionManagePage() {
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>New election</DialogTitle>
-            <DialogDescription>You can change any of this later with Edit.</DialogDescription>
+            <DialogDescription>You can change any of this later.</DialogDescription>
           </DialogHeader>
           {creating ? (
             <div className="space-y-4">
@@ -379,20 +376,35 @@ export default function ElectionManagePage() {
           <DialogHeader>
             <DialogTitle>Edit election</DialogTitle>
           </DialogHeader>
-          {editing ? (
+          {editing && election?.phase !== "closed" ? (
             <SettingsFields
               draft={editing}
               onChange={(patch) => setEditing((d) => (d ? { ...d, ...patch } : d))}
               joinCodeLocked={election?.phase === "voting"}
             />
           ) : null}
+          <div className="flex items-center justify-between gap-4 rounded-lg border border-destructive/40 p-3">
+            <p className="text-xs text-muted-foreground">Permanently delete this election and all of its data.</p>
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => {
+                setEditing(null);
+                setDeleteName("");
+              }}
+            >
+              <Trash2 className="mr-1.5 h-4 w-4" /> Delete election
+            </Button>
+          </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditing(null)}>
-              Cancel
+              {election?.phase === "closed" ? "Close" : "Cancel"}
             </Button>
-            <Button onClick={saveSettings} disabled={saving}>
-              Save
-            </Button>
+            {election?.phase !== "closed" ? (
+              <Button onClick={saveSettings} disabled={saving}>
+                Save
+              </Button>
+            ) : null}
           </DialogFooter>
         </DialogContent>
       </Dialog>
