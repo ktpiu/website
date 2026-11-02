@@ -30,7 +30,7 @@ export default function VotePage() {
   const queryClient = useQueryClient();
   const key = ["elections", "vote"];
   const query = useQuery({ queryKey: key, queryFn: () => rushFetch<Response>("/api/elections/current/voting") });
-  useElectionBroadcast(query.data?.election?.id, () => void queryClient.invalidateQueries({ queryKey: key }), 10_000);
+  useElectionBroadcast(query.data?.election?.id, () => void queryClient.invalidateQueries({ queryKey: key }));
 
   const [code, setCode] = useState("");
   // Keyed by round so picks never carry into a runoff.

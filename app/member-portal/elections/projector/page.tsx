@@ -21,7 +21,7 @@ function Projector() {
     enabled: Boolean(electionId) && canManageElections(permissions),
     queryFn: () => rushFetch<{ voting: ManagerVotingState }>(`/api/elections/${electionId}/voting`).then((r) => r.voting),
   });
-  useElectionBroadcast(electionId, () => void queryClient.invalidateQueries({ queryKey: key }), 10_000);
+  useElectionBroadcast(electionId, () => void queryClient.invalidateQueries({ queryKey: key }));
 
   if (!canManageElections(permissions)) {
     return <p className="p-8 text-muted-foreground">Only the Standards Board can open the projector view.</p>;

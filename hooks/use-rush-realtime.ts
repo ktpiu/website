@@ -21,6 +21,8 @@ type Options = {
   onRefresh: () => void;
   /** Safety-net polling in case the socket silently drops. */
   pollMs?: number;
+  /** Merges bursts of messages into one refresh, at a random delay up to this long, so screens don't all refetch at once. */
+  coalesceMs?: number;
 };
 
 /**
@@ -28,7 +30,7 @@ type Options = {
  * Also refreshes after a reconnect, when the tab becomes visible again and on
  * a slow poll, so screens recover from dropped connections without reloading.
  */
-export function useRushRealtime({ key, topics, onRefresh, pollMs = 30_000 }: Options) {
+export function useRushRealtime({ key, topics, onRefresh, pollMs = 30_000, coalesceMs = 0 }: Options) {
   const refreshRef = useRef(onRefresh);
   const topicsRef = useRef(topics);
   refreshRef.current = onRefresh;
@@ -37,6 +39,15 @@ export function useRushRealtime({ key, topics, onRefresh, pollMs = 30_000 }: Opt
   useEffect(() => {
     if (!key) return;
     const refresh = () => refreshRef.current();
+    let coalesceTimer: number | null = null;
+    const onMessage = () => {
+      if (!coalesceMs) return refresh();
+      if (coalesceTimer !== null) return;
+      coalesceTimer = window.setTimeout(() => {
+        coalesceTimer = null;
+        refresh();
+      }, 250 + Math.random() * coalesceMs);
+    };
 
     const channels = topicsRef.current.map((topic) => {
       let wasDisconnected = false;
@@ -44,7 +55,7 @@ export function useRushRealtime({ key, topics, onRefresh, pollMs = 30_000 }: Opt
         topic.name,
         topic.broadcast ? { config: { private: false } } : undefined,
       );
-      return topic.setup(channel, refresh).subscribe((status) => {
+      return topic.setup(channel, onMessage).subscribe((status) => {
         if (status === "SUBSCRIBED") {
           if (wasDisconnected) refresh();
           wasDisconnected = false;
@@ -65,9 +76,10 @@ export function useRushRealtime({ key, topics, onRefresh, pollMs = 30_000 }: Opt
     return () => {
       document.removeEventListener("visibilitychange", onVisible);
       window.clearInterval(timer);
+      if (coalesceTimer !== null) window.clearTimeout(coalesceTimer);
       for (const channel of channels) supabase.removeChannel(channel);
     };
-  }, [key, pollMs]);
+  }, [key, pollMs, coalesceMs]);
 }
 
 /**
@@ -89,14 +101,16 @@ export function useSlotBroadcasts(eventIds: string[], onRefresh: () => void) {
 
 /**
  * Listens for the content-free "changed" broadcast the database sends when an
- * election's phase, voters, rounds, ballots-in count or results change. Vote
- * counts never broadcast; screens refetch and get them once a round closes.
+ * election's phase, rounds or results change. Vote counts never broadcast;
+ * screens refetch and get them once a round closes. Ballots-in and admitted
+ * counts don't either, so the manager panel polls for them.
  */
-export function useElectionBroadcast(electionId: string | null | undefined, onRefresh: () => void, pollMs = 15_000) {
+export function useElectionBroadcast(electionId: string | null | undefined, onRefresh: () => void, pollMs = 30_000) {
   useRushRealtime({
     key: electionId ? `election:${electionId}` : null,
     onRefresh,
     pollMs,
+    coalesceMs: 1_000,
     topics: electionId
       ? [
           {

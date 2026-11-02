@@ -41,9 +41,10 @@ export function VotingPanel({ election }: { election: Election }) {
     queryFn: () =>
       rushFetch<{ members: ElectionMember[] }>(`/api/elections/${election.id}/candidates`),
   });
+  // Ballots-in and admitted counts don't broadcast, so poll for them.
   useElectionBroadcast(election.phase === "voting" ? election.id : null, () => {
     void queryClient.invalidateQueries({ queryKey: key });
-  });
+  }, 4_000);
 
   const [busy, setBusy] = useState(false);
   // Keyed by round, then choice.
