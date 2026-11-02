@@ -9,24 +9,26 @@ export const dynamic = "force-dynamic";
 
 type Params = { params: Promise<{ electionId: string }> };
 
-type Row = Omit<QueuedEndorsement, "author" | "candidate"> & {
-  author: { id: string; name: string } | null;
-  election_candidates: { id: string; users: { name: string } | null } | null;
+type Row = Omit<QueuedEndorsement, "author" | "candidate" | "position_title"> & {
+  author: { id: string; name: string; avatar: string | null } | null;
+  election_candidates: { id: string; users: { name: string; avatar: string | null } | null } | null;
+  election_candidacies: { election_positions: { title: string } | null } | null;
 };
 
 async function listEndorsements(electionId: string): Promise<QueuedEndorsement[]> {
   const { data, error } = await supabaseAdmin
     .from("election_endorsements")
     .select(
-      "id, kind, body, video_url, status, updated_at, author:users!election_endorsements_author_user_id_fkey(id, name), election_candidates!inner(id, election_id, users!election_candidates_user_id_fkey(name))",
+      "id, kind, body, video_url, status, updated_at, author:users!election_endorsements_author_user_id_fkey(id, name, avatar), election_candidates!inner(id, election_id, users!election_candidates_user_id_fkey(name, avatar)), election_candidacies(election_positions(title))",
     )
     .eq("election_candidates.election_id", electionId)
     .order("updated_at");
   if (error) throw error;
-  return ((data ?? []) as unknown as Row[]).map(({ election_candidates: candidate, author, ...rest }) => ({
+  return ((data ?? []) as unknown as Row[]).map(({ election_candidates: candidate, election_candidacies: candidacy, author, ...rest }) => ({
     ...rest,
-    author: author ?? { id: "", name: "Former member" },
-    candidate: { id: candidate?.id ?? "", name: candidate?.users?.name ?? "" },
+    author: author ?? { id: "", name: "Former member", avatar: null },
+    candidate: { id: candidate?.id ?? "", name: candidate?.users?.name ?? "", avatar: candidate?.users?.avatar ?? null },
+    position_title: candidacy?.election_positions?.title ?? "Position",
   }));
 }
 

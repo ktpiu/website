@@ -3,15 +3,17 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { FileText, X } from "lucide-react";
+import { ChevronDown, FileText, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Dropzone } from "@/components/ui/dropzone";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MaterialsEditor } from "@/components/member-portal/elections/materials-editor";
 import { errorMessage, rushFetch } from "@/lib/rush/client";
+import { cn } from "@/lib/utils";
 import { formatEastern } from "@/lib/elections/eastern-time";
 import { validateTranscriptFile } from "@/lib/elections/uploads";
 import {
@@ -32,9 +34,56 @@ const STATUS_VARIANT: Partial<Record<Candidacy["status"], "default" | "secondary
 };
 
 /**
+ * A card that can fold away. The content stays mounted while closed so
+ * collapsing doesn't lose unsaved materials.
+ */
+function SectionCard({
+  title,
+  description,
+  action,
+  collapsible,
+  defaultOpen,
+  children,
+}: {
+  title: string;
+  description: string;
+  action?: React.ReactNode;
+  collapsible: boolean;
+  defaultOpen: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const expanded = !collapsible || open;
+  return (
+    <Collapsible open={expanded} onOpenChange={setOpen}>
+      <Card>
+        <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0 flex-1 space-y-1.5">
+            <CardTitle className="text-base">{title}</CardTitle>
+            <CardDescription>{description}</CardDescription>
+          </div>
+          {action}
+          {collapsible ? (
+            <CollapsibleTrigger asChild>
+              <Button size="icon" variant="ghost" className="h-8 w-8" aria-label={`${expanded ? "Collapse" : "Expand"} ${title}`}>
+                <ChevronDown className={cn("h-4 w-4 transition-transform", expanded && "rotate-180")} />
+              </Button>
+            </CollapsibleTrigger>
+          ) : null}
+        </CardHeader>
+        <CollapsibleContent forceMount className="data-[state=closed]:hidden">
+          {children}
+        </CollapsibleContent>
+      </Card>
+    </Collapsible>
+  );
+}
+
+/**
  * The member's own run: apply or update an application while registration is
- * open, see each position's status, and submit campaign materials. Renders
- * nothing for members who aren't running once registration closes.
+ * open, see each position's status, and submit campaign materials. Both cards
+ * fold away once registration closes, starting folded when voting opens.
+ * Renders nothing for members who aren't running once registration closes.
  */
 export function ApplicationPanel() {
   const queryClient = useQueryClient();
@@ -201,20 +250,19 @@ export function ApplicationPanel() {
 
   return (
     <>
-      <Card>
-        <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-2">
-          <div className="space-y-1.5">
-            <CardTitle className="text-base">Your candidacy</CardTitle>
-            <CardDescription>
-              {mine.source === "manual" ? "Added by the Standards Board." : "Your application."} Each position is reviewed separately.
-            </CardDescription>
-          </div>
-          {applicationsOpen ? (
+      <SectionCard
+        title="Your candidacy"
+        description={`${mine.source === "manual" ? "Added by the Standards Board." : "Your application."} Each position is reviewed separately.`}
+        collapsible={!applicationsOpen}
+        defaultOpen={election.phase !== "voting"}
+        action={
+          applicationsOpen ? (
             <Button size="sm" variant="outline" onClick={startEdit}>
               Update application
             </Button>
-          ) : null}
-        </CardHeader>
+          ) : null
+        }
+      >
         <CardContent className="space-y-4">
           <ul className="divide-y rounded-lg border">
             {mine.candidacies.map((c) => (
@@ -243,21 +291,19 @@ export function ApplicationPanel() {
           </div>
           <p className="text-xs text-muted-foreground">Only you and the Standards Board can see your transcript.</p>
         </CardContent>
-      </Card>
+      </SectionCard>
 
       {mine.candidacies.some((c) => c.status === "approved") ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Campaign materials</CardTitle>
-            <CardDescription>
-              Due {formatEastern(election.submission_deadline)}. Members can review them after the deadline. Failure to
-              comply with these requirements will result in a voided candidacy.
-            </CardDescription>
-          </CardHeader>
+        <SectionCard
+          title="Campaign materials"
+          description={`Due ${formatEastern(election.submission_deadline)}. Members can review them after the deadline. Failure to comply with these requirements will result in a voided candidacy.`}
+          collapsible={!applicationsOpen}
+          defaultOpen={election.phase !== "voting"}
+        >
           <CardContent>
             <MaterialsEditor candidateId={mine.id} />
           </CardContent>
-        </Card>
+        </SectionCard>
       ) : null}
     </>
   );

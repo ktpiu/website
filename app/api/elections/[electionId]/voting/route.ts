@@ -15,7 +15,7 @@ async function managerState(election: Election): Promise<ManagerVotingState> {
     buildVotingState(election),
     supabaseAdmin
       .from("election_participants")
-      .select("user_id, status, users!election_participants_user_id_fkey(name)")
+      .select("user_id, status, users!election_participants_user_id_fkey(name, avatar)")
       .eq("election_id", election.id),
     supabaseAdmin.from("elections").select("voting_join_code").eq("id", election.id).single(),
   ]);
@@ -27,9 +27,9 @@ async function managerState(election: Election): Promise<ManagerVotingState> {
     participants: ((participants.data ?? []) as unknown as Array<{
       user_id: string;
       status: "admitted" | "removed";
-      users: { name: string } | null;
+      users: { name: string; avatar: string | null } | null;
     }>)
-      .map((p) => ({ user_id: p.user_id, name: p.users?.name ?? "", status: p.status }))
+      .map((p) => ({ user_id: p.user_id, name: p.users?.name ?? "", avatar: p.users?.avatar ?? null, status: p.status }))
       .sort((a, b) => a.name.localeCompare(b.name)),
     candidacies,
   };

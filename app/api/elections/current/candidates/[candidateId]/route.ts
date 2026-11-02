@@ -16,17 +16,18 @@ type Row = {
   intro: string | null;
   awards: string | null;
   users: { name: string; avatar: string | null } | null;
-  election_candidacies: Array<{ position_id: string; status: string; video_url: string | null }>;
+  election_candidacies: Array<{ id: string; position_id: string; status: string; video_url: string | null }>;
 };
 
 type EndorsementRow = MyEndorsement & {
+  candidacy_id: string;
   author_user_id: string;
-  author: { name: string } | null;
+  author: { name: string; avatar: string | null } | null;
 };
 
 /**
  * A candidate's profile for active members once registration closes, with
- * approved endorsements. Their materials follow at the deadline (candidates
+ * each role's video and approved endorsements. Their materials follow at the deadline (candidates
  * can preview their own earlier). Never includes the transcript.
  */
 export async function GET(_request: Request, { params }: Params) {
@@ -40,7 +41,7 @@ export async function GET(_request: Request, { params }: Params) {
     const { data, error } = await supabaseAdmin
       .from("election_candidates")
       .select(
-        "id, user_id, intro, awards, users!election_candidates_user_id_fkey(name, avatar), election_candidacies(position_id, status, video_url)",
+        "id, user_id, intro, awards, users!election_candidates_user_id_fkey(name, avatar), election_candidacies(id, position_id, status, video_url)",
       )
       .eq("id", candidateId)
       .eq("election_id", election.id)
@@ -58,14 +59,13 @@ export async function GET(_request: Request, { params }: Params) {
       materialsVisible ? getCandidatePhotos(row.id) : [],
       supabaseAdmin
         .from("election_endorsements")
-        .select("id, kind, body, video_url, status, author_user_id, author:users!election_endorsements_author_user_id_fkey(name)")
+        .select("id, candidacy_id, kind, body, video_url, status, author_user_id, author:users!election_endorsements_author_user_id_fkey(name, avatar)")
         .eq("candidate_id", row.id)
         .order("created_at"),
     ]);
     if (endorsements.error) throw endorsements.error;
     const order = new Map(positions.map((p) => [p.id, p]));
     const endorsementRows = (endorsements.data ?? []) as unknown as EndorsementRow[];
-    const mine = endorsementRows.find((e) => e.author_user_id === context.appUser.id);
 
     const profile: CandidateProfile = {
       candidate_id: row.id,
@@ -79,19 +79,29 @@ export async function GET(_request: Request, { params }: Params) {
       seats: onBallot
         .filter((c) => order.has(c.position_id))
         .sort((a, b) => order.get(a.position_id)!.sort_order - order.get(b.position_id)!.sort_order)
-        .map((c) => ({ position_id: c.position_id, title: order.get(c.position_id)!.title, video_url: materialsVisible ? c.video_url : null })),
-      endorsements: endorsementRows
-        .filter((e) => e.status === "approved")
-        .map((e) => ({
-          id: e.id,
-          author_name: e.author?.name ?? "A member",
-          kind: e.kind,
-          body: e.body,
-          video_url: e.video_url,
-        })),
-      my_endorsement: mine
-        ? { id: mine.id, kind: mine.kind, body: mine.body, video_url: mine.video_url, status: mine.status }
-        : null,
+        .map((c) => {
+          const forSeat = endorsementRows.filter((e) => e.candidacy_id === c.id);
+          const mine = forSeat.find((e) => e.author_user_id === context.appUser.id);
+          return {
+            candidacy_id: c.id,
+            position_id: c.position_id,
+            title: order.get(c.position_id)!.title,
+            video_url: materialsVisible ? c.video_url : null,
+            endorsements: forSeat
+              .filter((e) => e.status === "approved")
+              .map((e) => ({
+                id: e.id,
+                author_name: e.author?.name ?? "A member",
+                author_avatar: e.author?.avatar ?? null,
+                kind: e.kind,
+                body: e.body,
+                video_url: e.video_url,
+              })),
+            my_endorsement: mine
+              ? { id: mine.id, kind: mine.kind, body: mine.body, video_url: mine.video_url, status: mine.status }
+              : null,
+          };
+        }),
     };
     return NextResponse.json({ election, profile });
   } catch (error) {

@@ -16,12 +16,18 @@ import {
   type MyEndorsement,
 } from "@/lib/elections/types";
 
-export type EndorseTarget = { candidate_id: string; name: string; my_endorsement: MyEndorsement | null };
+export type EndorseTarget = {
+  candidate_id: string;
+  candidacy_id: string;
+  name: string;
+  title: string;
+  my_endorsement: MyEndorsement | null;
+};
 
 /**
- * Write, edit or withdraw the viewer's one endorsement of a candidate: text
- * (100 words) or a video link (1.5 minutes). Every save goes to the Standards
- * Board for approval. Mount with a `key` per candidate so the draft resets.
+ * Write, edit or withdraw the viewer's one endorsement of a candidate for one
+ * role: text (100 words) or a video link (1.5 minutes). Every save goes to the
+ * Standards Board for approval. Mount with a `key` per role so the draft resets.
  */
 export function EndorseDialog({
   target,
@@ -36,7 +42,7 @@ export function EndorseDialog({
   const [body, setBody] = useState(target.my_endorsement?.body ?? "");
   const [videoUrl, setVideoUrl] = useState(target.my_endorsement?.video_url ?? "");
   const [saving, setSaving] = useState(false);
-  const url = `/api/elections/current/candidates/${target.candidate_id}/endorsement`;
+  const url = `/api/elections/current/candidates/${target.candidate_id}/endorsement?candidacyId=${target.candidacy_id}`;
   const words = wordCount(body);
 
   const run = async (fn: () => Promise<unknown>, success: string) => {
@@ -67,7 +73,7 @@ export function EndorseDialog({
   };
 
   const withdraw = () => {
-    if (!window.confirm(`Withdraw your endorsement of ${target.name}?`)) return;
+    if (!window.confirm(`Withdraw your endorsement of ${target.name} for ${target.title}?`)) return;
     void run(() => rushFetch(url, { method: "DELETE" }), "Endorsement withdrawn.");
   };
 
@@ -75,9 +81,9 @@ export function EndorseDialog({
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Endorse {target.name}</DialogTitle>
+          <DialogTitle>Endorse {target.name} for {target.title}</DialogTitle>
           <DialogDescription>
-            One endorsement per candidate. It appears on their profile once the Standards Board approves it and
+            One endorsement per role. It appears on their profile for this role once the Standards Board approves it and
             registration has closed. Any edit goes back for approval.
           </DialogDescription>
         </DialogHeader>

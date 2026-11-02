@@ -11,7 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PeopleSelector } from "@/components/ui/people-selector";
+import { PeopleSelector, PersonAvatar } from "@/components/ui/people-selector";
 import { ResultsList } from "@/components/member-portal/elections/results-list";
 import { useElectionBroadcast } from "@/hooks/use-rush-realtime";
 import { errorMessage, rushFetch } from "@/lib/rush/client";
@@ -316,7 +316,7 @@ export function VotingPanel({ election }: { election: Election }) {
             <div className="flex flex-wrap items-end gap-2">
               <div className="w-64">
                 <PeopleSelector
-                  options={addable.map((m) => ({ key: m.id, name: m.name }))}
+                  options={addable.map((m) => ({ key: m.id, name: m.name, avatar: m.avatar }))}
                   value={admitId}
                   onChange={setAdmitId}
                   loading={members.isPending}
@@ -338,7 +338,8 @@ export function VotingPanel({ election }: { election: Election }) {
               <ul className="flex flex-wrap gap-1.5">
                 {admitted.map((p) => (
                   <li key={p.user_id}>
-                    <Badge variant="secondary" className="gap-1 pr-1">
+                    <Badge variant="secondary" className="gap-1 pr-1 pl-1">
+                      <PersonAvatar name={p.name} avatar={p.avatar} className="h-5 w-5" />
                       {p.name}
                       <button
                         type="button"

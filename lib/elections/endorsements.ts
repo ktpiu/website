@@ -16,12 +16,12 @@ type BallotRow = {
   id: string;
   user_id: string;
   users: { name: string; avatar: string | null } | null;
-  election_candidacies: Array<{ position_id: string; status: string }>;
+  election_candidacies: Array<{ id: string; position_id: string; status: string }>;
 };
 
 /**
  * Candidates on the ballot (any seat approved or since decided), in ballot
- * order, with the viewer's own endorsement of each. Nothing private: no
+ * order, with the viewer's own endorsement for each role. Nothing private: no
  * transcript, and only a count of approved endorsements once `showEndorsements`.
  */
 export async function listBallotCandidates(
@@ -33,17 +33,17 @@ export async function listBallotCandidates(
     getPositions(electionId),
     supabaseAdmin
       .from("election_candidates")
-      .select("id, user_id, users!election_candidates_user_id_fkey(name, avatar), election_candidacies(position_id, status)")
+      .select("id, user_id, users!election_candidates_user_id_fkey(name, avatar), election_candidacies(id, position_id, status)")
       .eq("election_id", electionId),
     supabaseAdmin
       .from("election_endorsements")
-      .select("id, candidate_id, kind, body, video_url, status, election_candidates!inner(election_id)")
+      .select("id, candidacy_id, kind, body, video_url, status, election_candidates!inner(election_id)")
       .eq("author_user_id", viewerId)
       .eq("election_candidates.election_id", electionId),
     showEndorsements
       ? supabaseAdmin
           .from("election_endorsements")
-          .select("candidate_id, election_candidates!inner(election_id)")
+          .select("candidacy_id, election_candidates!inner(election_id)")
           .eq("status", "approved")
           .eq("election_candidates.election_id", electionId)
       : Promise.resolve({ data: [], error: null }),
@@ -53,14 +53,14 @@ export async function listBallotCandidates(
   if (approved.error) throw approved.error;
 
   const endorsementCounts = new Map<string, number>();
-  for (const e of (approved.data ?? []) as unknown as Array<{ candidate_id: string }>) {
-    endorsementCounts.set(e.candidate_id, (endorsementCounts.get(e.candidate_id) ?? 0) + 1);
+  for (const e of (approved.data ?? []) as unknown as Array<{ candidacy_id: string }>) {
+    endorsementCounts.set(e.candidacy_id, (endorsementCounts.get(e.candidacy_id) ?? 0) + 1);
   }
 
   const order = new Map(positions.map((p) => [p.id, p]));
-  const myByCandidate = new Map(
-    ((mine.data ?? []) as Array<MyEndorsement & { candidate_id: string }>).map((e) => [
-      e.candidate_id,
+  const myByCandidacy = new Map(
+    ((mine.data ?? []) as unknown as Array<MyEndorsement & { candidacy_id: string }>).map((e) => [
+      e.candidacy_id,
       { id: e.id, kind: e.kind, body: e.body, video_url: e.video_url, status: e.status },
     ]),
   );
@@ -70,15 +70,19 @@ export async function listBallotCandidates(
       const seats = row.election_candidacies
         .filter((c) => (ON_BALLOT_STATUSES as string[]).includes(c.status) && order.has(c.position_id))
         .sort((a, b) => order.get(a.position_id)!.sort_order - order.get(b.position_id)!.sort_order)
-        .map((c) => ({ position_id: c.position_id, title: order.get(c.position_id)!.title }));
+        .map((c) => ({
+          candidacy_id: c.id,
+          position_id: c.position_id,
+          title: order.get(c.position_id)!.title,
+          endorsement_count: endorsementCounts.get(c.id) ?? 0,
+          my_endorsement: myByCandidacy.get(c.id) ?? null,
+        }));
       return {
         candidate_id: row.id,
         name: row.users?.name ?? "",
         avatar: row.users?.avatar ?? null,
         is_me: row.user_id === viewerId,
         seats,
-        endorsement_count: endorsementCounts.get(row.id) ?? 0,
-        my_endorsement: myByCandidate.get(row.id) ?? null,
       };
     })
     .filter((c) => c.seats.length > 0)

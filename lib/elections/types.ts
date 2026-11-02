@@ -83,7 +83,7 @@ export type ManagedCandidate = MyCandidacy & {
   photo_count: number;
 };
 
-export type ElectionMember = { id: string; name: string; email: string };
+export type ElectionMember = { id: string; name: string; email: string; avatar: string | null };
 
 export const CANDIDACY_STATUS_LABELS: Record<CandidacyStatus, string> = {
   pending: "Pending review",
@@ -177,7 +177,7 @@ export function materialsChecklist(m: Pick<CandidateMaterials, "intro" | "awards
 export type EndorsementKind = "text" | "video";
 export type EndorsementStatus = "pending" | "approved" | "rejected";
 
-/** The viewer's own endorsement of a candidate. */
+/** The viewer's own endorsement of a candidate for one role. */
 export type MyEndorsement = {
   id: string;
   kind: EndorsementKind;
@@ -192,10 +192,14 @@ export type BallotCandidate = {
   name: string;
   avatar: string | null;
   is_me: boolean;
-  seats: Array<{ position_id: string; title: string }>;
-  /** Approved endorsements. Stays 0 until registration closes. */
-  endorsement_count: number;
-  my_endorsement: MyEndorsement | null;
+  seats: Array<{
+    candidacy_id: string;
+    position_id: string;
+    title: string;
+    /** Approved endorsements for this role. Stays 0 until registration closes. */
+    endorsement_count: number;
+    my_endorsement: MyEndorsement | null;
+  }>;
 };
 
 /** An endorsement in the Standards Board's approval queue. */
@@ -206,8 +210,9 @@ export type QueuedEndorsement = {
   video_url: string | null;
   status: EndorsementStatus;
   updated_at: string;
-  author: { id: string; name: string };
-  candidate: { id: string; name: string };
+  author: { id: string; name: string; avatar: string | null };
+  candidate: { id: string; name: string; avatar: string | null };
+  position_title: string;
 };
 
 export const ENDORSEMENT_STATUS_LABELS: Record<EndorsementStatus, string> = {
@@ -235,15 +240,22 @@ export type CandidateProfile = {
   intro: string;
   awards: string;
   photos: CandidatePhoto[];
-  seats: Array<{ position_id: string; title: string; video_url: string | null }>;
-  endorsements: Array<{
-    id: string;
-    author_name: string;
-    kind: EndorsementKind;
-    body: string | null;
+  /** One profile per role: its own video and endorsements. The rest is shared. */
+  seats: Array<{
+    candidacy_id: string;
+    position_id: string;
+    title: string;
     video_url: string | null;
+    endorsements: Array<{
+      id: string;
+      author_name: string;
+      author_avatar: string | null;
+      kind: EndorsementKind;
+      body: string | null;
+      video_url: string | null;
+    }>;
+    my_endorsement: MyEndorsement | null;
   }>;
-  my_endorsement: MyEndorsement | null;
 };
 
 /** Profiles open to members at the deadline; candidates can preview their own once finalized. */
@@ -307,7 +319,7 @@ export type VotingState = {
 
 export type ManagerVotingState = VotingState & {
   join_code: string | null;
-  participants: Array<{ user_id: string; name: string; status: "admitted" | "removed" }>;
+  participants: Array<{ user_id: string; name: string; avatar: string | null; status: "admitted" | "removed" }>;
   /** Every on-ballot candidacy, for choosing who is on a re-vote. */
   candidacies: Array<VotingChoice & { position_id: string; status: CandidacyStatus }>;
 };

@@ -3,7 +3,6 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarDays } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -70,7 +69,13 @@ export default function ElectionsPage() {
     <div className="mx-auto max-w-5xl space-y-6 pb-10">
       <RushPageHeader
         title="Elections"
-        description={election ? election.name : "Executive board, director and Standards Board elections"}
+        description={
+          election
+            ? election.election_date && stage !== "voting"
+              ? `${election.name} · Planned for ${formatEastern(election.election_date)}`
+              : election.name
+            : "Executive board, director and Standards Board elections"
+        }
       />
 
       {!election ? (
@@ -96,15 +101,6 @@ export default function ElectionsPage() {
                 <Button asChild size="lg">
                   <Link href="/member-portal/elections/vote">{ballotDue ? "Vote" : "View results"}</Link>
                 </Button>
-              </CardContent>
-            </Card>
-          ) : election.election_date ? (
-            <Card>
-              <CardContent className="flex items-center gap-3 text-sm">
-                <CalendarDays className="h-5 w-5 shrink-0 text-muted-foreground" />
-                <span>
-                  Election planned for <span className="font-medium">{formatEastern(election.election_date)}</span>
-                </span>
               </CardContent>
             </Card>
           ) : null}
@@ -134,7 +130,10 @@ export default function ElectionsPage() {
                 ) : (
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                     {running.map((candidate) => {
-                      const href = finalized ? `/member-portal/elections/candidates/${candidate.candidate_id}` : null;
+                      const seat = candidate.seats.find((s) => s.position_id === position.id)!;
+                      const href = finalized
+                        ? `/member-portal/elections/candidates/${candidate.candidate_id}?role=${seat.candidacy_id}`
+                        : null;
                       return (
                         <Card key={candidate.candidate_id} className="py-4">
                           <CardContent className="flex items-center gap-3 px-4">
@@ -150,20 +149,32 @@ export default function ElectionsPage() {
                               ) : (
                                 <p className="truncate font-medium">{candidate.name}</p>
                               )}
-                              {finalized && candidate.endorsement_count > 0 ? (
+                              {finalized && seat.endorsement_count > 0 ? (
                                 <p className="text-xs text-muted-foreground">
-                                  {candidate.endorsement_count} endorsement{candidate.endorsement_count === 1 ? "" : "s"}
+                                  {seat.endorsement_count} endorsement{seat.endorsement_count === 1 ? "" : "s"}
                                 </p>
                               ) : null}
-                              {candidate.my_endorsement ? (
+                              {seat.my_endorsement ? (
                                 <Badge variant="outline" className="max-w-full truncate">
-                                  Yours: {ENDORSEMENT_STATUS_LABELS[candidate.my_endorsement.status]}
+                                  Yours: {ENDORSEMENT_STATUS_LABELS[seat.my_endorsement.status]}
                                 </Badge>
                               ) : null}
                             </div>
                             {canEndorse && !candidate.is_me ? (
-                              <Button size="sm" variant="outline" onClick={() => setEndorsing(candidate)}>
-                                {candidate.my_endorsement ? "Edit" : "Endorse"}
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() =>
+                                  setEndorsing({
+                                    candidate_id: candidate.candidate_id,
+                                    candidacy_id: seat.candidacy_id,
+                                    name: candidate.name,
+                                    title: seat.title,
+                                    my_endorsement: seat.my_endorsement,
+                                  })
+                                }
+                              >
+                                {seat.my_endorsement ? "Edit" : "Endorse"}
                               </Button>
                             ) : null}
                           </CardContent>
@@ -180,7 +191,7 @@ export default function ElectionsPage() {
 
       {endorsing ? (
         <EndorseDialog
-          key={endorsing.candidate_id}
+          key={endorsing.candidacy_id}
           target={endorsing}
           onClose={() => setEndorsing(null)}
           onChanged={() => void queryClient.invalidateQueries({ queryKey: ["elections", "ballot"] })}

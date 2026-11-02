@@ -386,7 +386,7 @@ export function CandidatesPanel({
                 <Label htmlFor="campaigner">Member</Label>
                 <PeopleSelector
                   id="campaigner"
-                  options={members.map((m) => ({ key: m.id, name: m.name }))}
+                  options={members.map((m) => ({ key: m.id, name: m.name, avatar: m.avatar }))}
                   value={adding.userId ? [adding.userId] : []}
                   onChange={(value) => setAdding((a) => (a ? { ...a, userId: value[0] ?? "" } : a))}
                   loading={candidates.isPending}

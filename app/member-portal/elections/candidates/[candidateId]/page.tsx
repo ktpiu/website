@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from "@/components/ui/carousel";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PersonAvatar } from "@/components/ui/people-selector";
 import { EndorseDialog } from "@/components/member-portal/elections/endorse-dialog";
 import { errorMessage, initials, rushFetch } from "@/lib/rush/client";
 import { videoEmbedUrl } from "@/lib/elections/video";
@@ -50,8 +51,16 @@ function VideoPlayer({ url, title }: { url: string; title: string }) {
   );
 }
 
-export default function CandidateProfilePage({ params }: { params: Promise<{ candidateId: string }> }) {
+/** One profile per role (`?role=<candidacy id>`). Photos, intro and awards are shared. */
+export default function CandidateProfilePage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ candidateId: string }>;
+  searchParams: Promise<{ role?: string }>;
+}) {
   const { candidateId } = use(params);
+  const { role } = use(searchParams);
   const queryClient = useQueryClient();
   const key = ["elections", "profile", candidateId];
   const query = useQuery({
@@ -88,6 +97,7 @@ export default function CandidateProfilePage({ params }: { params: Promise<{ can
   }
 
   const { election, profile } = query.data;
+  const seat = profile.seats.find((s) => s.candidacy_id === role) ?? profile.seats[0];
   const canEndorse = endorsementsOpen(election) && !profile.is_me;
   const preview = profile.is_me && !profilesOpen(election);
   const materialsVisible = profile.materials_visible;
@@ -121,18 +131,20 @@ export default function CandidateProfilePage({ params }: { params: Promise<{ can
           <h1 className="text-2xl font-bold tracking-tight">{profile.name}</h1>
           <div className="flex flex-wrap gap-1.5">
             {profile.seats.map((s) => (
-              <Badge key={s.position_id} variant="secondary">
-                {s.title}
+              <Badge key={s.position_id} variant={s === seat ? "default" : "outline"} asChild>
+                <Link href={`/member-portal/elections/candidates/${candidateId}?role=${s.candidacy_id}`} replace scroll={false}>
+                  {s.title}
+                </Link>
               </Badge>
             ))}
           </div>
         </div>
         {canEndorse ? (
           <div className="flex flex-col items-end gap-1">
-            <Button onClick={() => setEndorsing(true)}>{profile.my_endorsement ? "Edit endorsement" : "Endorse"}</Button>
-            {profile.my_endorsement ? (
+            <Button onClick={() => setEndorsing(true)}>{seat.my_endorsement ? "Edit endorsement" : "Endorse"}</Button>
+            {seat.my_endorsement ? (
               <span className="text-xs text-muted-foreground">
-                {ENDORSEMENT_STATUS_LABELS[profile.my_endorsement.status]}
+                {ENDORSEMENT_STATUS_LABELS[seat.my_endorsement.status]}
               </span>
             ) : null}
           </div>
@@ -178,20 +190,18 @@ export default function CandidateProfilePage({ params }: { params: Promise<{ can
           </CardContent>
         </Card>
 
-        {profile.seats.map((seat) => (
-          <Card key={seat.position_id}>
-            <CardHeader>
-              <CardTitle className="text-base">Initiatives: {seat.title}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {seat.video_url ? (
-                <VideoPlayer url={seat.video_url} title={`${profile.name}: ${seat.title} initiatives`} />
-              ) : (
-                <p className="text-sm text-muted-foreground">No video submitted.</p>
-              )}
-            </CardContent>
-          </Card>
-        ))}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Initiatives: {seat.title}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {seat.video_url ? (
+              <VideoPlayer url={seat.video_url} title={`${profile.name}: ${seat.title} initiatives`} />
+            ) : (
+              <p className="text-sm text-muted-foreground">No video submitted.</p>
+            )}
+          </CardContent>
+        </Card>
         </>
       ) : null}
 
@@ -208,16 +218,19 @@ export default function CandidateProfilePage({ params }: { params: Promise<{ can
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Endorsements</CardTitle>
+          <CardTitle className="text-base">Endorsements: {seat.title}</CardTitle>
         </CardHeader>
         <CardContent>
-          {profile.endorsements.length === 0 ? (
+          {seat.endorsements.length === 0 ? (
             <p className="text-sm text-muted-foreground">No endorsements yet.</p>
           ) : (
             <ul className="space-y-4">
-              {profile.endorsements.map((e) => (
+              {seat.endorsements.map((e) => (
                 <li key={e.id} className="space-y-1.5">
-                  <p className="text-sm font-medium">{e.author_name}</p>
+                  <p className="flex items-center gap-2 text-sm font-medium">
+                    <PersonAvatar name={e.author_name} avatar={e.author_avatar} />
+                    {e.author_name}
+                  </p>
                   {e.kind === "text" ? (
                     <p className="whitespace-pre-wrap text-sm text-muted-foreground">{e.body}</p>
                   ) : e.video_url ? (
@@ -232,7 +245,14 @@ export default function CandidateProfilePage({ params }: { params: Promise<{ can
 
       {endorsing ? (
         <EndorseDialog
-          target={{ candidate_id: profile.candidate_id, name: profile.name, my_endorsement: profile.my_endorsement }}
+          key={seat.candidacy_id}
+          target={{
+            candidate_id: profile.candidate_id,
+            candidacy_id: seat.candidacy_id,
+            name: profile.name,
+            title: seat.title,
+            my_endorsement: seat.my_endorsement,
+          }}
           onClose={() => setEndorsing(false)}
           onChanged={() => {
             void queryClient.invalidateQueries({ queryKey: key });

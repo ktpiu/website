@@ -269,7 +269,7 @@ export async function listCandidates(electionId: string): Promise<ManagedCandida
 export async function listActiveMembers() {
   const { data, error } = await supabaseAdmin
     .from("users")
-    .select("id, name, email")
+    .select("id, name, email, avatar")
     .eq("account_status", "active")
     .order("name");
   if (error) throw error;

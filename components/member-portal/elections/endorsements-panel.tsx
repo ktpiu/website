@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PersonAvatar } from "@/components/ui/people-selector";
 import { NativeSelect } from "@/components/rush/native-select";
 import { errorMessage, formatDateTime, rushFetch } from "@/lib/rush/client";
 import {
@@ -80,9 +81,11 @@ export function EndorsementsPanel({ election }: { election: Election }) {
             {shown.map((e) => (
               <li key={e.id} className="space-y-2 px-3 py-3 text-sm">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p>
-                    <span className="font-medium">{e.author.name}</span> endorsing{" "}
-                    <span className="font-medium">{e.candidate.name}</span>
+                  <p className="flex flex-wrap items-center gap-1.5">
+                    <PersonAvatar name={e.author.name} avatar={e.author.avatar} />
+                    <span className="font-medium">{e.author.name}</span> endorsing
+                    <PersonAvatar name={e.candidate.name} avatar={e.candidate.avatar} />
+                    <span className="font-medium">{e.candidate.name}</span> for {e.position_title}
                   </p>
                   <div className="flex items-center gap-2">
                     <Badge variant="outline">{e.kind === "text" ? "Written" : "Video"}</Badge>

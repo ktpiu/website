@@ -42,11 +42,12 @@ function initials(name: string) {
     .toUpperCase();
 }
 
-function PersonAvatar({ person }: { person: PersonOption }) {
+/** A person's profile picture, or their initials when they don't have one. */
+export function PersonAvatar({ name, avatar, className }: { name: string; avatar?: string | null; className?: string }) {
   return (
-    <Avatar className="h-6 w-6">
-      {person.avatar ? <AvatarImage src={person.avatar} alt="" /> : null}
-      <AvatarFallback className="text-[10px]">{initials(person.name)}</AvatarFallback>
+    <Avatar className={cn("h-6 w-6", className)}>
+      {avatar ? <AvatarImage src={avatar} alt="" /> : null}
+      <AvatarFallback className="text-[10px]">{initials(name)}</AvatarFallback>
     </Avatar>
   );
 }
@@ -143,7 +144,7 @@ export function PeopleSelector({
                       onClick={() => toggle(option.key)}
                       className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted disabled:opacity-40"
                     >
-                      <PersonAvatar person={option} />
+                      <PersonAvatar name={option.name} avatar={option.avatar} />
                       <span className="flex-1 truncate">{option.name}</span>
                       {showKinds && option.kind ? (
                         <span className="text-[10px] uppercase text-muted-foreground">{option.kind}</span>
@@ -162,7 +163,7 @@ export function PeopleSelector({
         <ul className="divide-y rounded-md border">
           {selected.map((person) => (
             <li key={person.key} className="flex items-center gap-2 px-2 py-1.5 text-sm">
-              <PersonAvatar person={person} />
+              <PersonAvatar name={person.name} avatar={person.avatar} />
               <span className="flex-1 truncate">{person.name}</span>
               {showKinds && person.kind ? (
                 <span className="text-[10px] uppercase text-muted-foreground">{person.kind}</span>
