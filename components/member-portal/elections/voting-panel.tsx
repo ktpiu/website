@@ -123,7 +123,7 @@ export function VotingPanel({ election }: { election: Election }) {
               : "This election is closed."}
           </CardDescription>
         </div>
-        {live ? (
+        {live && usesCode ? (
           <Button asChild size="sm" variant="outline">
             <Link href={`/member-portal/elections/projector?election=${election.id}`} target="_blank">
               <MonitorPlay className="mr-1.5 h-4 w-4" /> Projector view

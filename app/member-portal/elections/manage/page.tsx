@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Pencil, Plus } from "lucide-react";
+import { Pencil, Plus, Trash2 } from "lucide-react";
 import { useAuthStore } from "@/lib/auth-store";
 import { canManageElections, canViewTranscripts } from "@/lib/permissions";
 import { Badge } from "@/components/ui/badge";
@@ -59,6 +59,7 @@ export default function ElectionManagePage() {
   const [creating, setCreating] = useState<(SettingsDraft & SeatsDraft) | null>(null);
   const [editing, setEditing] = useState<SettingsDraft | null>(null);
   const [editingSeats, setEditingSeats] = useState<SeatsDraft | null>(null);
+  const [deleteName, setDeleteName] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   if (!canManage) {
@@ -175,6 +176,18 @@ export default function ElectionManagePage() {
     );
   };
 
+  const deleteElection = async () => {
+    if (!election) return;
+    const ok = await run(
+      () => rushFetch(`/api/elections/${election.id}`, { method: "DELETE" }),
+      "Election deleted.",
+    );
+    if (ok) {
+      setDeleteName(null);
+      setSelectedId(elections.find((e) => e.id !== election.id)?.id ?? null);
+    }
+  };
+
   return (
     <div className="mx-auto max-w-5xl space-y-6 pb-10">
       <RushPageHeader
@@ -247,6 +260,9 @@ export default function ElectionManagePage() {
                     <Pencil className="mr-1.5 h-4 w-4" /> Edit
                   </Button>
                 ) : null}
+                <Button size="sm" variant="outline" onClick={() => setDeleteName("")}>
+                  <Trash2 className="mr-1.5 h-4 w-4" /> Delete
+                </Button>
               </div>
             </CardHeader>
             <CardContent>
@@ -404,6 +420,39 @@ export default function ElectionManagePage() {
             </Button>
             <Button onClick={saveSeats} disabled={saving}>
               Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleteName !== null} onOpenChange={(open) => !open && setDeleteName(null)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Delete election</DialogTitle>
+            <DialogDescription>
+              This permanently deletes {election?.name} with its candidates, materials, endorsements, votes and results.
+              It can&apos;t be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            <Label htmlFor="election-delete-name">Type the election name to confirm</Label>
+            <Input
+              id="election-delete-name"
+              value={deleteName ?? ""}
+              autoComplete="off"
+              onChange={(e) => setDeleteName(e.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteName(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={deleteElection}
+              disabled={saving || deleteName?.trim() !== election?.name}
+            >
+              Delete election
             </Button>
           </DialogFooter>
         </DialogContent>

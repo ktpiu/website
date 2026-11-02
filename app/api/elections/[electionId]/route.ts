@@ -8,6 +8,7 @@ import {
   getPositions,
   parseDeadline,
   parseElectionDate,
+  removeElectionObject,
 } from "@/lib/elections/server";
 
 export const dynamic = "force-dynamic";
@@ -75,5 +76,39 @@ export async function PATCH(request: Request, { params }: Params) {
     return NextResponse.json({ election: data });
   } catch (error) {
     return rushErrorResponse(error, "Failed to update the election.");
+  }
+}
+
+/**
+ * Permanently deletes an election in any phase. Its positions, candidates,
+ * votes and results cascade; the uploaded files are removed afterwards.
+ */
+export async function DELETE(_request: Request, { params }: Params) {
+  try {
+    const context = await requireAppAuthContext();
+    assertElectionsManagePermission(context);
+    const { electionId } = await params;
+    await getElection(electionId);
+
+    const [candidates, photos] = await Promise.all([
+      supabaseAdmin.from("election_candidates").select("transcript_path").eq("election_id", electionId),
+      supabaseAdmin
+        .from("election_candidate_photos")
+        .select("path, election_candidates!inner(election_id)")
+        .eq("election_candidates.election_id", electionId),
+    ]);
+    if (candidates.error) throw candidates.error;
+    if (photos.error) throw photos.error;
+
+    const { error } = await supabaseAdmin.from("elections").delete().eq("id", electionId);
+    if (error) throw error;
+
+    await Promise.all([
+      ...(candidates.data ?? []).map((c) => removeElectionObject(c.transcript_path)),
+      ...(photos.data ?? []).map((p) => removeElectionObject(p.path)),
+    ]);
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    return rushErrorResponse(error, "Failed to delete the election.");
   }
 }
