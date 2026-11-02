@@ -86,3 +86,25 @@ export function useSlotBroadcasts(eventIds: string[], onRefresh: () => void) {
     })),
   });
 }
+
+/**
+ * Listens for the content-free "changed" broadcast the database sends when an
+ * election's phase, voters, rounds, ballots-in count or results change. Vote
+ * counts never broadcast; screens refetch and get them once a round closes.
+ */
+export function useElectionBroadcast(electionId: string | null | undefined, onRefresh: () => void, pollMs = 15_000) {
+  useRushRealtime({
+    key: electionId ? `election:${electionId}` : null,
+    onRefresh,
+    pollMs,
+    topics: electionId
+      ? [
+          {
+            name: `election:${electionId}`,
+            broadcast: true,
+            setup: (channel, refresh) => channel.on("broadcast", { event: "changed" }, refresh),
+          },
+        ]
+      : [],
+  });
+}

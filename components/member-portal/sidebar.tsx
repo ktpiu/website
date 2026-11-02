@@ -22,6 +22,7 @@ import {
   ClipboardPen,
   Gavel,
   Settings2,
+  Vote,
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { prefetchRushPage, useCycleParam } from "@/components/member-portal/rush/shared";
@@ -52,6 +53,7 @@ import { useAuthStore } from "@/lib/auth-store";
 import { getUserDirectoryScope } from "@/lib/account-status";
 import Link from "next/link";
 import {
+  canManageElections,
   canManageRush,
   canManageRushForms,
   canViewAdmin,
@@ -98,6 +100,14 @@ export function MemberPortalSidebar() {
     },
     // { icon: Vote, label: "Elections", href: "/member-portal/elections" },
     { icon: FileText, label: "Forms", href: "/member-portal/forms" },
+    // Elections are for active members only (not alumni).
+    ...(user?.account_status === "active"
+      ? [
+          { icon: Vote, label: "Elections", href: "/member-portal/elections" },
+          { icon: Gavel, label: "Vote", href: "/member-portal/elections/vote" },
+          { icon: ClipboardPen, label: "Run for Office", href: "/member-portal/elections/candidacy" },
+        ]
+      : []),
   ];
 
   const externalLinks = [
@@ -122,6 +132,14 @@ export function MemberPortalSidebar() {
     },
   ];
 
+  const electionAdminItems = [
+    {
+      icon: Vote,
+      label: "Election Management",
+      href: "/member-portal/elections/manage",
+    },
+  ];
+
   const financeAdminItems = [
     {
       icon: Landmark,
@@ -139,8 +157,9 @@ export function MemberPortalSidebar() {
 
   // Check if current path matches navigation item
   const isActiveRoute = (href: string) => {
-    if (href === "/member-portal") {
-      return pathname === "/member-portal";
+    // Their sub-pages have their own sidebar items.
+    if (href === "/member-portal" || href === "/member-portal/elections") {
+      return pathname === href;
     }
     return pathname.startsWith(href);
   };
@@ -189,10 +208,12 @@ export function MemberPortalSidebar() {
   const canViewCoreAdmin = canViewAdmin(permissions);
   // Rush directors and committee get the rush-scoped view of User Management.
   const canViewUsers = getUserDirectoryScope(permissions) !== null;
-  const showAdminGroup = canViewCoreAdmin || canViewFinance || canViewUsers;
+  const canRunElections = canManageElections(permissions);
+  const showAdminGroup = canViewCoreAdmin || canViewFinance || canViewUsers || canRunElections;
   const adminItems = [
     ...(canViewCoreAdmin ? coreAdminItems : canViewUsers ? coreAdminItems.slice(0, 1) : []),
     ...(canViewFinance ? financeAdminItems : []),
+    ...(canRunElections ? electionAdminItems : []),
   ];
 
   return (

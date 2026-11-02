@@ -1,0 +1,76 @@
+import { NextResponse } from "next/server";
+import { supabaseAdmin } from "@/lib/supabase-admin";
+import { assertElectionsManagePermission, requireAppAuthContext } from "@/lib/server-auth";
+import { readJson, RushError, rushErrorResponse, str } from "@/lib/rush/server";
+import {
+  getElection,
+  getPositions,
+  parseDeadline,
+  parseMaxPositions,
+} from "@/lib/elections/server";
+import { positionsLocked } from "@/lib/elections/types";
+
+export const dynamic = "force-dynamic";
+
+type Params = { params: Promise<{ electionId: string }> };
+
+export async function GET(_request: Request, { params }: Params) {
+  try {
+    const context = await requireAppAuthContext();
+    assertElectionsManagePermission(context);
+    const { electionId } = await params;
+    const [election, positions] = await Promise.all([getElection(electionId), getPositions(electionId)]);
+    return NextResponse.json({ election, positions });
+  } catch (error) {
+    return rushErrorResponse(error, "Failed to load the election.");
+  }
+}
+
+/**
+ * Edits the settings (name, deadline, positions per candidate) and opens
+ * applications. Later phases have their own actions.
+ */
+export async function PATCH(request: Request, { params }: Params) {
+  try {
+    const context = await requireAppAuthContext();
+    assertElectionsManagePermission(context);
+    const { electionId } = await params;
+    const election = await getElection(electionId);
+    if (election.phase === "closed") throw new RushError(409, "This election is closed.");
+    const body = await readJson(request);
+
+    const patch: Record<string, unknown> = {};
+    if ("name" in body) {
+      const name = str(body.name, 120);
+      if (!name) throw new RushError(400, "Name the election.");
+      patch.name = name;
+    }
+    if ("submissionDeadline" in body) patch.submission_deadline = parseDeadline(body.submissionDeadline);
+    if ("maxPositionsPerCandidate" in body) {
+      if (positionsLocked(election)) {
+        throw new RushError(409, "Candidates are finalized, so the positions limit is locked.");
+      }
+      patch.max_positions_per_candidate = parseMaxPositions(body.maxPositionsPerCandidate);
+    }
+    if (body.phase === "applications") {
+      if (election.phase !== "setup") throw new RushError(409, "Applications can only open from setup.");
+      patch.phase = "applications";
+    }
+    if (Object.keys(patch).length === 0) throw new RushError(400, "Nothing to update.");
+
+    patch.updated_by = context.appUser.id;
+    patch.updated_at = new Date().toISOString();
+
+    const { data, error } = await supabaseAdmin
+      .from("elections")
+      .update(patch)
+      .eq("id", electionId)
+      .select("*")
+      .single();
+    if (error?.code === "23505") throw new RushError(409, "Another election is already underway.");
+    if (error) throw error;
+    return NextResponse.json({ election: data });
+  } catch (error) {
+    return rushErrorResponse(error, "Failed to update the election.");
+  }
+}

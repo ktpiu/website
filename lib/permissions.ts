@@ -15,6 +15,8 @@ export const RUSH_FORMS_MANAGE = "rush.forms.manage";
 export const RUSH_ATTENDANCE_VIEW_ACTIVES = "rush.attendance.view_actives";
 export const USERS_RUSH_MANAGE = "users.rush.manage";
 export const USERS_ACTIVATE = "users.activate";
+export const ELECTIONS_MANAGE = "elections.manage";
+export const ELECTIONS_TRANSCRIPTS_VIEW = "elections.transcripts.view";
 
 type RolePermissionRowLike = {
   role_id?: string | null;
@@ -124,6 +126,16 @@ export function canViewActiveAttendance(permissions: Iterable<string> | null | u
 /** Runs deliberation sessions and sees voting history. */
 export function canManageDeliberation(permissions: Iterable<string> | null | undefined) {
   return hasPermission(permissions, RUSH_DELIBERATION_MANAGE);
+}
+
+/** Runs elections: applications, candidates, endorsements and voting. */
+export function canManageElections(permissions: Iterable<string> | null | undefined) {
+  return hasPermission(permissions, ELECTIONS_MANAGE);
+}
+
+/** Opens candidate transcripts. Granted narrowly; elections.manage alone doesn't. */
+export function canViewTranscripts(permissions: Iterable<string> | null | undefined) {
+  return hasPermission(permissions, ELECTIONS_TRANSCRIPTS_VIEW);
 }
 
 /**

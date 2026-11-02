@@ -4,6 +4,7 @@ import {
   ADMIN_FINANCE_VIEW,
   ADMIN_USERS_EDIT,
   ADMIN_VIEW,
+  ELECTIONS_MANAGE,
   RUSH_DELIBERATION_MANAGE,
   RUSH_FORMS_MANAGE,
   RUSH_MANAGE,
@@ -266,6 +267,19 @@ export function assertRushManagePermission(context: AppAuthContext) {
 export function assertDeliberationManagePermission(context: AppAuthContext) {
   if (!context.permissions.has(RUSH_DELIBERATION_MANAGE)) {
     throw new RouteAuthError(403, "Missing deliberation admin permission.");
+  }
+}
+
+export function assertElectionsManagePermission(context: AppAuthContext) {
+  if (!context.permissions.has(ELECTIONS_MANAGE)) {
+    throw new RouteAuthError(403, "Missing elections permission.");
+  }
+}
+
+/** Elections are for active members only; alumni have portal access but not this. */
+export function assertActiveMember(context: AppAuthContext) {
+  if (context.profile.account_status !== "active") {
+    throw new RouteAuthError(403, "Elections are only available to active members.");
   }
 }
 
