@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Ban, Check, FileText, FolderOpen, Lock, MoreVertical, Pencil, Plus, X } from "lucide-react";
+import { Ban, CalendarClock, Check, FileText, FolderOpen, Lock, MoreVertical, Pencil, Plus, Undo2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,12 +15,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { PeopleSelector } from "@/components/ui/people-selector";
 import { MaterialsEditor } from "@/components/member-portal/elections/materials-editor";
 import { errorMessage, rushFetch } from "@/lib/rush/client";
+import { formatEastern, isoToEasternInput } from "@/lib/elections/eastern-time";
 import {
   CANDIDACY_STATUS_LABELS,
   isLatePosition,
@@ -44,7 +46,9 @@ const STATUS_VARIANT: Partial<Record<Candidacy["status"], "default" | "secondary
  * Applications and campaigners for one election: approve or deny each seat
  * (denials need a reason the applicant sees), open transcripts, change a
  * candidate's positions, and add campaigners by hand, with each candidate's
- * actions in one menu. Decisions lock when candidates are finalized.
+ * actions in one menu. Decisions lock when candidates are finalized; after
+ * that, approved seats can be voided (and voids undone) until voting starts,
+ * and a candidate can be given an extension on the materials deadline.
  */
 export function CandidatesPanel({
   election,
@@ -73,12 +77,15 @@ export function CandidatesPanel({
   const [materialsFor, setMaterialsFor] = useState<{ id: string; name: string } | null>(null);
   const [adding, setAdding] = useState<{ userId: string; positionIds: Set<string> } | null>(null);
   const [editing, setEditing] = useState<{ candidate: ManagedCandidate; positionIds: Set<string> } | null>(null);
+  const [extending, setExtending] = useState<{ candidate: ManagedCandidate; value: string } | null>(null);
   const [saving, setSaving] = useState(false);
 
   const editable = !election.candidates_finalized_at && (election.phase === "setup" || election.phase === "applications");
   // After finalize, approved candidacies can be voided until voting starts.
   const canVoid = Boolean(election.candidates_finalized_at) && election.phase === "campaign";
   // Standards can move a candidate between positions until voting starts.
+  // Extensions only matter while candidates can still be editing materials.
+  const canExtend = election.phase === "applications" || election.phase === "campaign";
   const canEditPositions = ["setup", "applications", "campaign"].includes(election.phase);
   // Finalized elections only take new campaigners for seats added since then.
   const lateSeats = positions.filter((p) => isLatePosition(election, p));
@@ -174,6 +181,25 @@ export function CandidatesPanel({
     }
   };
 
+  const saveExtension = async (value: string | null) => {
+    if (!extending) return;
+    if (value !== null && !value) return toast.error("Choose the new deadline.");
+    setSaving(true);
+    try {
+      await rushFetch(`/api/elections/${election.id}/candidates/${extending.candidate.id}`, {
+        method: "PATCH",
+        json: { extendedUntil: value },
+      });
+      toast.success(value ? "Extension saved." : "Extension removed.");
+      setExtending(null);
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setSaving(false);
+      void queryClient.invalidateQueries({ queryKey: key });
+    }
+  };
+
   const candidateIds = new Set(list.map((c) => c.user.id));
   // Existing candidates can also run for a seat added later.
   const members = (candidates.data?.members ?? []).filter(
@@ -226,11 +252,17 @@ export function CandidatesPanel({
                 candidate.photo_count > 0,
               ];
               const requiredDone = required.filter(Boolean).length;
+              const extendedUntil =
+                candidate.materials_extended_until &&
+                new Date(candidate.materials_extended_until) > new Date(election.submission_deadline)
+                  ? candidate.materials_extended_until
+                  : null;
               const decisions = seats.flatMap((seat) => {
-                const actions: Array<"approve" | "deny" | "void"> = [];
+                const actions: Array<"approve" | "deny" | "void" | "restore"> = [];
                 if (editable && ["pending", "denied"].includes(seat.status)) actions.push("approve");
                 if (editable && ["pending", "approved"].includes(seat.status)) actions.push("deny");
                 if (canVoid && seat.status === "approved") actions.push("void");
+                if (canVoid && seat.status === "voided") actions.push("restore");
                 return actions.map((action) => ({ seat, action }));
               });
               return (
@@ -241,6 +273,9 @@ export function CandidatesPanel({
                       <p className="truncate text-xs text-muted-foreground">
                         {candidate.user.email} · {candidate.source === "manual" ? "Added by Standards" : "Applied"}
                       </p>
+                      {extendedUntil ? (
+                        <p className="text-xs text-muted-foreground">Materials extended to {formatEastern(extendedUntil)}</p>
+                      ) : null}
                     </div>
                     <div className="flex items-center gap-2">
                       {approvedSeats.length > 0 ? (
@@ -277,6 +312,18 @@ export function CandidatesPanel({
                               <FileText /> {candidate.has_transcript ? "Transcript on file" : "No transcript yet"}
                             </DropdownMenuItem>
                           )}
+                          {canExtend && approvedSeats.length > 0 ? (
+                            <DropdownMenuItem
+                              onSelect={() =>
+                                setExtending({
+                                  candidate,
+                                  value: isoToEasternInput(extendedUntil ?? election.submission_deadline),
+                                })
+                              }
+                            >
+                              <CalendarClock /> {extendedUntil ? "Change extension" : "Extend materials deadline"}
+                            </DropdownMenuItem>
+                          ) : null}
                           {canEditPositions ? (
                             <DropdownMenuItem onSelect={() => startEditPositions(candidate)}>
                               <Pencil /> Edit positions
@@ -319,6 +366,16 @@ export function CandidatesPanel({
                                   onSelect={() => decide([{ candidacyId: seat.id, status: "approved" }], "Approved.")}
                                 >
                                   <Check /> Approve for {title}
+                                </DropdownMenuItem>
+                              );
+                            }
+                            if (action === "restore") {
+                              return (
+                                <DropdownMenuItem
+                                  key={`${seat.id}-restore`}
+                                  onSelect={() => decide([{ candidacyId: seat.id, status: "approved" }], "Void undone.")}
+                                >
+                                  <Undo2 /> Undo void for {title}
                                 </DropdownMenuItem>
                               );
                             }
@@ -391,6 +448,44 @@ export function CandidatesPanel({
             <Button variant="destructive" onClick={confirmDeny} disabled={saving}>
               {denying?.status === "voided" ? "Void candidacy" : "Deny"}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={extending !== null} onOpenChange={(open) => !open && setExtending(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Extend {extending?.candidate.user.name}&apos;s materials deadline</DialogTitle>
+            <DialogDescription>
+              Everyone else&apos;s materials are due {formatEastern(election.submission_deadline)}. Only this candidate
+              can keep editing until the new deadline.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            <Label htmlFor="extended-until">New deadline (Eastern Time)</Label>
+            <Input
+              id="extended-until"
+              type="datetime-local"
+              value={extending?.value ?? ""}
+              onChange={(e) => setExtending((d) => (d ? { ...d, value: e.target.value } : d))}
+            />
+          </div>
+          <DialogFooter className="gap-2 sm:justify-between">
+            {extending?.candidate.materials_extended_until ? (
+              <Button variant="outline" onClick={() => saveExtension(null)} disabled={saving}>
+                Remove extension
+              </Button>
+            ) : (
+              <span />
+            )}
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setExtending(null)}>
+                Cancel
+              </Button>
+              <Button onClick={() => saveExtension(extending?.value ?? "")} disabled={saving}>
+                Save
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>

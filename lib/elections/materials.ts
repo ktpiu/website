@@ -6,7 +6,7 @@ import { RushError } from "@/lib/rush/server";
 import type { AppAuthContext } from "@/lib/server-auth";
 import { ELECTIONS_BUCKET, getElection, getPositions } from "@/lib/elections/server";
 import { MAX_PHOTOS, PHOTO_TYPES, sniffPhotoType, validatePhotoFile } from "@/lib/elections/uploads";
-import type { CandidateMaterials, CandidatePhoto, Election } from "@/lib/elections/types";
+import { materialsDeadline, type CandidateMaterials, type CandidatePhoto, type Election } from "@/lib/elections/types";
 
 const PHOTO_URL_SECONDS = 60 * 60;
 
@@ -19,6 +19,7 @@ type MaterialsRow = {
   transcript_path: string | null;
   materials_updated_at: string | null;
   materials_updated_by: string | null;
+  materials_extended_until: string | null;
   users: { name: string } | null;
 };
 
@@ -32,7 +33,8 @@ export type MaterialsAccess = {
 
 /**
  * Who may see and change a candidate's materials. The candidate edits while
- * applications or the campaign are open, before the deadline, once at least
+ * applications or the campaign are open, before the deadline (or their own
+ * extension from the Standards Board), once at least
  * one seat is approved. Election managers edit until voting starts, deadline
  * or not. Anyone else gets a 404.
  */
@@ -40,7 +42,7 @@ export async function getMaterialsAccess(candidateId: string, context: AppAuthCo
   const { data, error } = await supabaseAdmin
     .from("election_candidates")
     .select(
-      "id, election_id, user_id, intro, awards, transcript_path, materials_updated_at, materials_updated_by, users!election_candidates_user_id_fkey(name)",
+      "id, election_id, user_id, intro, awards, transcript_path, materials_updated_at, materials_updated_by, materials_extended_until, users!election_candidates_user_id_fkey(name)",
     )
     .eq("id", candidateId)
     .maybeSingle();
@@ -63,7 +65,11 @@ export async function getMaterialsAccess(candidateId: string, context: AppAuthCo
       .eq("status", "approved");
     if (countError) throw countError;
     if (!count) lockedReason = "You can add materials once the Standards Board approves your application.";
-    else if (new Date(election.submission_deadline) <= new Date()) lockedReason = "The submission deadline has passed.";
+    else if (new Date(materialsDeadline(election, row.materials_extended_until)) <= new Date()) {
+      lockedReason = row.materials_extended_until
+        ? "Your extended deadline has passed."
+        : "The submission deadline has passed.";
+    }
   }
   return { row, election, isSelf, canEdit: lockedReason === null, lockedReason };
 }

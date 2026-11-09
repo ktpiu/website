@@ -1,9 +1,10 @@
 "use client";
 
-import { use, useState } from "react";
+import { use, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -51,6 +52,99 @@ function VideoPlayer({ url, title }: { url: string; title: string }) {
   );
 }
 
+/**
+ * A full-screen photo viewer. Closes on the X, a click outside the photo or
+ * Escape; arrow keys move between photos.
+ */
+function PhotoLightbox({
+  photos,
+  index,
+  name,
+  onIndex,
+  onClose,
+}: {
+  photos: Array<{ id: string; url: string | null }>;
+  index: number;
+  name: string;
+  onIndex: (index: number) => void;
+  onClose: () => void;
+}) {
+  const count = photos.length;
+  const step = (delta: number) => onIndex((index + delta + count) % count);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+      else if (e.key === "ArrowLeft" && count > 1) onIndex((index - 1 + count) % count);
+      else if (e.key === "ArrowRight" && count > 1) onIndex((index + 1) % count);
+    };
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = overflow;
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [count, index, onClose, onIndex]);
+
+  const photo = photos[index];
+  return createPortal(
+    <div
+      role="presentation"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4 sm:p-10"
+      onClick={onClose}
+    >
+      <button
+        type="button"
+        aria-label="Close photo"
+        className="absolute right-3 top-3 rounded-full bg-white/10 p-2 text-white transition hover:bg-white/20"
+        onClick={onClose}
+      >
+        <X className="size-6" />
+      </button>
+      {count > 1 ? (
+        <>
+          <button
+            type="button"
+            aria-label="Previous photo"
+            className="absolute left-3 top-1/2 -translate-y-1/2 rounded-full bg-white/10 p-2 text-white transition hover:bg-white/20"
+            onClick={(e) => {
+              e.stopPropagation();
+              step(-1);
+            }}
+          >
+            <ChevronLeft className="size-6" />
+          </button>
+          <button
+            type="button"
+            aria-label="Next photo"
+            className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-white/10 p-2 text-white transition hover:bg-white/20"
+            onClick={(e) => {
+              e.stopPropagation();
+              step(1);
+            }}
+          >
+            <ChevronRight className="size-6" />
+          </button>
+          <p className="absolute bottom-4 left-1/2 -translate-x-1/2 text-sm text-white/70">
+            {index + 1} / {count}
+          </p>
+        </>
+      ) : null}
+      {photo?.url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={photo.url}
+          alt={`${name}, photo ${index + 1}`}
+          className="max-h-full max-w-full rounded-md object-contain"
+          onClick={(e) => e.stopPropagation()}
+        />
+      ) : null}
+    </div>,
+    document.body,
+  );
+}
+
 /** One profile per role (`?role=<candidacy id>`). Photos, intro and awards are shared. */
 export default function CandidateProfilePage({
   params,
@@ -68,6 +162,7 @@ export default function CandidateProfilePage({
     queryFn: () => rushFetch<{ election: Election; profile: CandidateProfile }>(`/api/elections/current/candidates/${candidateId}`),
   });
   const [endorsing, setEndorsing] = useState(false);
+  const [viewing, setViewing] = useState<number | null>(null);
 
   const back = (
     <Button asChild variant="ghost" size="sm" className="-ml-2">
@@ -156,13 +251,19 @@ export default function CandidateProfilePage({
           <CarouselContent>
             {profile.photos.map((photo, index) => (
               <CarouselItem key={photo.id}>
-                <div className="aspect-square overflow-hidden rounded-lg border bg-muted">
+                <button
+                  type="button"
+                  className="block aspect-square w-full cursor-zoom-in overflow-hidden rounded-lg border bg-muted"
+                  aria-label={`View photo ${index + 1} full screen`}
+                  onClick={() => setViewing(index)}
+                  disabled={!photo.url}
+                >
                   {photo.url ? (
                     // Signed URLs from private storage; next/image would need the host configured.
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={photo.url} alt={`${profile.name}, photo ${index + 1}`} className="h-full w-full object-cover" />
                   ) : null}
-                </div>
+                </button>
               </CarouselItem>
             ))}
           </CarouselContent>
@@ -242,6 +343,16 @@ export default function CandidateProfilePage({
           )}
         </CardContent>
       </Card>
+
+      {viewing !== null ? (
+        <PhotoLightbox
+          photos={profile.photos}
+          index={viewing}
+          name={profile.name}
+          onIndex={setViewing}
+          onClose={() => setViewing(null)}
+        />
+      ) : null}
 
       {endorsing ? (
         <EndorseDialog

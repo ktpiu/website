@@ -203,6 +203,7 @@ type CandidateRow = {
   source: "application" | "manual";
   transcript_path: string | null;
   applied_at: string;
+  materials_extended_until: string | null;
   election_candidacies: Array<Candidacy & { created_at: string }>;
   users?: { id: string; name: string; email: string; avatar: string | null } | null;
   intro?: string | null;
@@ -217,6 +218,7 @@ function toMyCandidacy(row: CandidateRow): MyCandidacy {
     source: row.source,
     has_transcript: Boolean(row.transcript_path),
     applied_at: row.applied_at,
+    materials_extended_until: row.materials_extended_until,
     candidacies: row.election_candidacies
       .slice()
       .sort((a, b) => a.created_at.localeCompare(b.created_at))
@@ -234,7 +236,7 @@ function toMyCandidacy(row: CandidateRow): MyCandidacy {
 export async function getCandidateRow(electionId: string, userId: string) {
   const { data, error } = await supabaseAdmin
     .from("election_candidates")
-    .select(`id, user_id, source, transcript_path, applied_at, election_candidacies(${CANDIDACY_COLUMNS})`)
+    .select(`id, user_id, source, transcript_path, applied_at, materials_extended_until, election_candidacies(${CANDIDACY_COLUMNS})`)
     .eq("election_id", electionId)
     .eq("user_id", userId)
     .maybeSingle();
@@ -251,7 +253,7 @@ export async function listCandidates(electionId: string): Promise<ManagedCandida
   const { data, error } = await supabaseAdmin
     .from("election_candidates")
     .select(
-      `id, user_id, source, transcript_path, applied_at, intro, users!election_candidates_user_id_fkey(id, name, email, avatar), election_candidacies(${CANDIDACY_COLUMNS}), election_candidate_photos(count)`,
+      `id, user_id, source, transcript_path, applied_at, materials_extended_until, intro, users!election_candidates_user_id_fkey(id, name, email, avatar), election_candidacies(${CANDIDACY_COLUMNS}), election_candidate_photos(count)`,
     )
     .eq("election_id", electionId)
     .order("applied_at");

@@ -27,7 +27,7 @@ function parseDecisions(value: unknown): Decision[] {
  * Approves or denies applications, one seat at a time (Approve all / Deny all
  * send several). Decisions can change until candidates are finalized. After
  * that, an approved candidacy can only be voided (for not meeting the
- * requirements), with a reason, until voting starts.
+ * requirements), with a reason, or a void undone, until voting starts.
  */
 export async function PATCH(request: Request, { params }: Params) {
   try {
@@ -39,7 +39,7 @@ export async function PATCH(request: Request, { params }: Params) {
     const finalized = Boolean(election.candidates_finalized_at);
     if (finalized) {
       if (election.phase !== "campaign") throw new RushError(409, "Candidacies can't be voided once voting starts.");
-      if (decisions.some((d) => d.status !== "voided")) {
+      if (decisions.some((d) => d.status === "denied")) {
         throw new RushError(409, "Candidates are finalized, so decisions are locked. You can still void a candidacy.");
       }
     } else {
@@ -56,9 +56,19 @@ export async function PATCH(request: Request, { params }: Params) {
     if (error) throw error;
     const known = new Map((seats ?? []).map((s) => [s.id as string, s.status as string]));
     if (decisions.some((d) => !known.has(d.candidacyId))) throw new RushError(404, "Application not found.");
-    const allowedFrom = finalized ? ["approved"] : ["pending", "approved", "denied"];
-    if (decisions.some((d) => !allowedFrom.includes(known.get(d.candidacyId)!))) {
-      throw new RushError(409, finalized ? "Only approved candidacies can be voided." : "Withdrawn applications can't be decided.");
+    // After finalize: approved -> voided, or voided -> approved (undoing a void).
+    const allowedFrom = (d: Decision) =>
+      !finalized ? ["pending", "approved", "denied"] : d.status === "voided" ? ["approved"] : ["voided"];
+    const invalid = decisions.find((d) => !allowedFrom(d).includes(known.get(d.candidacyId)!));
+    if (invalid) {
+      throw new RushError(
+        409,
+        !finalized
+          ? "Withdrawn applications can't be decided."
+          : invalid.status === "voided"
+            ? "Only approved candidacies can be voided."
+            : "Only voided candidacies can be restored.",
+      );
     }
 
     const decidedAt = new Date().toISOString();

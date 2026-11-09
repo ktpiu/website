@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { assertElectionsManagePermission, requireAppAuthContext } from "@/lib/server-auth";
 import { readJson, RushError, rushErrorResponse } from "@/lib/rush/server";
+import { easternInputToIso, formatEastern } from "@/lib/elections/eastern-time";
 import {
   addCandidacies,
   getElection,
@@ -60,5 +61,47 @@ export async function PUT(request: Request, { params }: Params) {
     return NextResponse.json({ candidates: await listCandidates(electionId) });
   } catch (error) {
     return rushErrorResponse(error, "Failed to update the positions.");
+  }
+}
+
+/**
+ * Grants or clears one candidate's extension on the materials deadline.
+ * `extendedUntil` is an Eastern datetime-local string, or null to clear it.
+ * It must be after the election's deadline and before the election date.
+ */
+export async function PATCH(request: Request, { params }: Params) {
+  try {
+    const context = await requireAppAuthContext();
+    assertElectionsManagePermission(context);
+    const { electionId, candidateId } = await params;
+    const election = await getElection(electionId);
+    if (!["applications", "campaign"].includes(election.phase)) {
+      throw new RushError(409, "Extensions can't be changed once voting starts.");
+    }
+    const body = await readJson(request);
+    let extendedUntil: string | null = null;
+    if (body.extendedUntil !== null) {
+      extendedUntil = typeof body.extendedUntil === "string" ? easternInputToIso(body.extendedUntil) : null;
+      if (!extendedUntil) throw new RushError(400, "Enter the extended deadline (Eastern Time).");
+      if (new Date(extendedUntil) <= new Date(election.submission_deadline)) {
+        throw new RushError(400, `An extension must be after the deadline (${formatEastern(election.submission_deadline)}).`);
+      }
+      if (election.election_date && new Date(extendedUntil) > new Date(election.election_date)) {
+        throw new RushError(400, `An extension must end before the election (${formatEastern(election.election_date)}).`);
+      }
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from("election_candidates")
+      .update({ materials_extended_until: extendedUntil })
+      .eq("id", candidateId)
+      .eq("election_id", electionId)
+      .select("id")
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) throw new RushError(404, "Candidate not found.");
+    return NextResponse.json({ candidates: await listCandidates(electionId) });
+  } catch (error) {
+    return rushErrorResponse(error, "Failed to save the extension.");
   }
 }

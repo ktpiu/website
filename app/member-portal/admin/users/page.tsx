@@ -15,6 +15,7 @@ import {
   Trash2,
   TriangleAlert,
   UsersRound,
+  X,
 } from "lucide-react";
 import { useAuthStore } from "@/lib/auth-store";
 import {
@@ -152,9 +153,11 @@ export default function AdminUsersPage() {
   const [editRoleIds, setEditRoleIds] = useState<Record<string, string[]>>({});
   const [saveUserId, setSaveUserId] = useState<string | null>(null);
   const [avatarUploadUserId, setAvatarUploadUserId] = useState<string | null>(null);
-  const [deleteUserId, setDeleteUserId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
-  const [pendingDeleteUser, setPendingDeleteUser] = useState<SupabaseUser | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<SupabaseUser[] | null>(null);
+  // Right-click menu, anchored where the click happened.
+  const [contextMenu, setContextMenu] = useState<{ userId: string; x: number; y: number; key: number } | null>(null);
   const [editState, setEditState] = useState<Record<string, EditState>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [editDialogSection, setEditDialogSection] = useState<EditDialogSection>("profile");
@@ -304,17 +307,27 @@ export default function AdminUsersPage() {
     }
   };
 
-  const handleDelete = async (currentUser: SupabaseUser) => {
+  const handleDelete = async (targets: SupabaseUser[]) => {
     if (!canDelete) return;
-    setDeleteUserId(currentUser.id);
+    setDeleting(true);
+    const deleted = new Set<string>();
     try {
-      await deleteUserRecord(currentUser.id);
-      setData((prev) => (prev ? { ...prev, users: prev.users.filter((u) => u.id !== currentUser.id) } : prev));
-    } catch (err) {
-      console.error("Failed to delete user:", err);
-      toast.error(`Failed to delete ${currentUser.name}.`);
+      for (const target of targets) {
+        try {
+          await deleteUserRecord(target.id);
+          deleted.add(target.id);
+        } catch (err) {
+          console.error("Failed to delete user:", err);
+          toast.error(`Failed to delete ${target.name}.`);
+        }
+      }
+      setData((prev) => (prev ? { ...prev, users: prev.users.filter((u) => !deleted.has(u.id)) } : prev));
+      setSelected((prev) => new Set(Array.from(prev).filter((id) => !deleted.has(id))));
+      if (targets.length > 1 && deleted.size > 0) {
+        toast.success(`Deleted ${deleted.size} account${deleted.size === 1 ? "" : "s"}.`);
+      }
     } finally {
-      setDeleteUserId(null);
+      setDeleting(false);
     }
   };
 
@@ -411,6 +424,122 @@ export default function AdminUsersPage() {
 
   const columnCount = userTableColumns.length + (canSelect ? 1 : 0);
 
+  // A row that's part of a multi-selection acts on the whole selection.
+  const actsOnSelection = (user: SupabaseUser) => selected.size > 1 && selected.has(user.id);
+
+  const openEdit = (user: SupabaseUser) => {
+    setEditDialogSection("profile");
+    setEditRoleIds((prev) => ({ ...prev, [user.id]: [...(userRoleIds[user.id] ?? [])] }));
+    setEditingUserId(user.id);
+  };
+
+  const userHasMenu = (user: SupabaseUser) =>
+    actsOnSelection(user) ||
+    canEdit ||
+    canDelete ||
+    allowedTransitions(permissions, user.account_status).length > 0 ||
+    Boolean(rushView && rush[user.id]);
+
+  /** The actions menu for a row: shared by the ⋯ button and right-click. */
+  const renderMenuItems = (user: SupabaseUser) => {
+    if (actsOnSelection(user)) {
+      return (
+        <>
+          <DropdownMenuLabel className="text-xs text-muted-foreground">{selected.size} selected</DropdownMenuLabel>
+          {bulkTargets.length > 0 ? (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="text-xs text-muted-foreground">Move to</DropdownMenuLabel>
+              {bulkTargets.map((to) => (
+                <DropdownMenuItem
+                  key={to}
+                  onClick={() => setStatusTarget({ to, userIds: selectedUsers.map((u) => u.id) })}
+                >
+                  <ArrowRightLeft className="h-4 w-4" />
+                  {ACCOUNT_STATUS_LABELS[to]}
+                </DropdownMenuItem>
+              ))}
+            </>
+          ) : null}
+          {selectedRushStage ? (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setRushTransitionOpen(true)}>
+                <ArrowRightLeft className="h-4 w-4" />
+                {STAGE_LABELS[selectedRushStage]} actions…
+              </DropdownMenuItem>
+            </>
+          ) : null}
+          {canDelete ? (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem variant="destructive" onClick={() => setPendingDelete(selectedUsers)}>
+                <Trash2 className="h-4 w-4" />
+                Delete {selected.size} accounts
+              </DropdownMenuItem>
+            </>
+          ) : null}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => setSelected(new Set())}>
+            <X className="h-4 w-4" />
+            Clear selection
+          </DropdownMenuItem>
+        </>
+      );
+    }
+
+    const moves = allowedTransitions(permissions, user.account_status);
+    const rushInfo = rush[user.id];
+    const canLinkSignIn = canEdit && user.account_status === "public" && Boolean(user.clerk_user_id);
+    return (
+      <>
+        {canEdit ? (
+          <DropdownMenuItem onClick={() => openEdit(user)}>
+            <Pencil className="h-4 w-4" />
+            Edit
+          </DropdownMenuItem>
+        ) : null}
+        {rushView && rushInfo ? (
+          <DropdownMenuItem asChild>
+            <Link href={`/member-portal/rush/pnms/${rushInfo.pnmId}`}>
+              <ExternalLink className="h-4 w-4" />
+              Rush profile
+            </Link>
+          </DropdownMenuItem>
+        ) : null}
+        {canLinkSignIn ? (
+          <DropdownMenuItem onClick={() => setLinkSignInUser(user)}>
+            <Link2 className="h-4 w-4" />
+            Link sign-in to a profile…
+          </DropdownMenuItem>
+        ) : null}
+        {moves.length > 0 ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel className="text-xs text-muted-foreground">Move to</DropdownMenuLabel>
+            {moves.map((to) => (
+              <DropdownMenuItem key={to} onClick={() => setStatusTarget({ to, userIds: [user.id] })}>
+                <ArrowRightLeft className="h-4 w-4" />
+                {ACCOUNT_STATUS_LABELS[to]}
+              </DropdownMenuItem>
+            ))}
+          </>
+        ) : null}
+        {canDelete ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onClick={() => setPendingDelete([user])}>
+              <Trash2 className="h-4 w-4" />
+              Delete
+            </DropdownMenuItem>
+          </>
+        ) : null}
+      </>
+    );
+  };
+
+  const contextUser = contextMenu ? users.find((u) => u.id === contextMenu.userId) : undefined;
+
   const accountsTable = (
     <div className="space-y-4">
       <div className="flex flex-wrap gap-1 rounded-lg border bg-muted/40 p-1">
@@ -443,41 +572,6 @@ export default function AdminUsersPage() {
         shownCount={filteredUsers.length}
         totalCount={viewUsers.length}
       />
-
-      {selected.size > 0 ? (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-card px-3 py-2 text-sm">
-          <span className="font-medium">{selected.size} selected</span>
-          {bulkTargets.length > 0 ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button size="sm" className="gap-1.5">
-                  <ArrowRightLeft className="h-3.5 w-3.5" /> Move to…
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start">
-                {bulkTargets.map((to) => (
-                  <DropdownMenuItem
-                    key={to}
-                    onClick={() => setStatusTarget({ to, userIds: selectedUsers.map((u) => u.id) })}
-                  >
-                    {ACCOUNT_STATUS_LABELS[to]}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          ) : (
-            <span className="text-muted-foreground">You can&apos;t move these accounts.</span>
-          )}
-          {selectedRushStage ? (
-            <Button size="sm" variant="outline" onClick={() => setRushTransitionOpen(true)}>
-              {STAGE_LABELS[selectedRushStage]} actions…
-            </Button>
-          ) : null}
-          <Button size="sm" variant="ghost" className="ml-auto" onClick={() => setSelected(new Set())}>
-            Clear
-          </Button>
-        </div>
-      ) : null}
 
       <div className="overflow-x-auto rounded-xl border bg-card">
         <Table>
@@ -560,11 +654,18 @@ export default function AdminUsersPage() {
                 const isLinked = Boolean(currentUser.clerk_user_id);
                 const moves = allowedTransitions(permissions, currentUser.account_status);
                 const rushInfo = rush[currentUser.id];
-                const canLinkSignIn = canEdit && currentUser.account_status === "public" && isLinked;
-                const hasMenu = canEdit || canDelete || moves.length > 0 || (rushView && rushInfo);
+                const hasMenu = userHasMenu(currentUser);
 
                 return (
-                  <TableRow key={currentUser.id} data-state={selected.has(currentUser.id) ? "selected" : undefined}>
+                  <TableRow
+                    key={currentUser.id}
+                    data-state={selected.has(currentUser.id) ? "selected" : undefined}
+                    onContextMenu={(e) => {
+                      if (!hasMenu) return;
+                      e.preventDefault();
+                      setContextMenu({ userId: currentUser.id, x: e.clientX, y: e.clientY, key: Date.now() });
+                    }}
+                  >
                     {canSelect ? (
                       <TableCell>
                         {moves.length > 0 ? (
@@ -674,64 +775,20 @@ export default function AdminUsersPage() {
                       {hasMenu ? (
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" aria-label={`Actions for ${currentUser.name}`}>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label={
+                                actsOnSelection(currentUser)
+                                  ? `Actions for ${selected.size} selected`
+                                  : `Actions for ${currentUser.name}`
+                              }
+                            >
                               <MoreHorizontal className="h-4 w-4" />
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-56">
-                            {canEdit ? (
-                              <DropdownMenuItem
-                                onClick={() => {
-                                  setEditDialogSection("profile");
-                                  setEditRoleIds((prev) => ({
-                                    ...prev,
-                                    [currentUser.id]: [...(userRoleIds[currentUser.id] ?? [])],
-                                  }));
-                                  setEditingUserId(currentUser.id);
-                                }}
-                              >
-                                <Pencil className="h-4 w-4" />
-                                Edit
-                              </DropdownMenuItem>
-                            ) : null}
-                            {rushView && rushInfo ? (
-                              <DropdownMenuItem asChild>
-                                <Link href={`/member-portal/rush/pnms/${rushInfo.pnmId}`}>
-                                  <ExternalLink className="h-4 w-4" />
-                                  Rush profile
-                                </Link>
-                              </DropdownMenuItem>
-                            ) : null}
-                            {canLinkSignIn ? (
-                              <DropdownMenuItem onClick={() => setLinkSignInUser(currentUser)}>
-                                <Link2 className="h-4 w-4" />
-                                Link sign-in to a profile…
-                              </DropdownMenuItem>
-                            ) : null}
-                            {moves.length > 0 ? (
-                              <>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuLabel className="text-xs text-muted-foreground">Move to</DropdownMenuLabel>
-                                {moves.map((to) => (
-                                  <DropdownMenuItem
-                                    key={to}
-                                    onClick={() => setStatusTarget({ to, userIds: [currentUser.id] })}
-                                  >
-                                    <ArrowRightLeft className="h-4 w-4" />
-                                    {ACCOUNT_STATUS_LABELS[to]}
-                                  </DropdownMenuItem>
-                                ))}
-                              </>
-                            ) : null}
-                            {canDelete ? (
-                              <>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem variant="destructive" onClick={() => setPendingDeleteUser(currentUser)}>
-                                  <Trash2 className="h-4 w-4" />
-                                  Delete
-                                </DropdownMenuItem>
-                              </>
-                            ) : null}
+                            {renderMenuItems(currentUser)}
                           </DropdownMenuContent>
                         </DropdownMenu>
                       ) : null}
@@ -792,6 +849,21 @@ export default function AdminUsersPage() {
           </TableBody>
         </Table>
       </div>
+
+      {contextMenu && contextUser ? (
+        <DropdownMenu key={contextMenu.key} open modal={false} onOpenChange={(open) => !open && setContextMenu(null)}>
+          <DropdownMenuTrigger asChild>
+            <span
+              aria-hidden
+              className="pointer-events-none fixed size-0"
+              style={{ left: contextMenu.x, top: contextMenu.y }}
+            />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-56">
+            {renderMenuItems(contextUser)}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : null}
     </div>
   );
 
@@ -898,17 +970,17 @@ export default function AdminUsersPage() {
       />
 
       <DeleteUserDialog
-        open={Boolean(pendingDeleteUser)}
-        userName={pendingDeleteUser?.name}
-        isDeleting={Boolean(pendingDeleteUser && deleteUserId === pendingDeleteUser.id)}
+        open={Boolean(pendingDelete)}
+        userNames={pendingDelete?.map((u) => u.name)}
+        isDeleting={deleting}
         onOpenChange={(isOpen) => {
-          if (!isOpen) setPendingDeleteUser(null);
+          if (!isOpen) setPendingDelete(null);
         }}
-        onCancel={() => setPendingDeleteUser(null)}
+        onCancel={() => setPendingDelete(null)}
         onConfirm={async () => {
-          if (!pendingDeleteUser) return;
-          await handleDelete(pendingDeleteUser);
-          setPendingDeleteUser(null);
+          if (!pendingDelete) return;
+          await handleDelete(pendingDelete);
+          setPendingDelete(null);
         }}
       />
     </div>

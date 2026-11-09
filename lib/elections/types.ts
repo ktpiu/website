@@ -73,6 +73,8 @@ export type MyCandidacy = {
   source: "application" | "manual";
   has_transcript: boolean;
   applied_at: string;
+  /** Standards-granted extension on this candidate's materials deadline. */
+  materials_extended_until: string | null;
   candidacies: Candidacy[];
 };
 
@@ -84,6 +86,16 @@ export type ManagedCandidate = MyCandidacy & {
 };
 
 export type ElectionMember = { id: string; name: string; email: string; avatar: string | null };
+
+/** The candidate's own materials deadline: the election's, or a later extension. */
+export function materialsDeadline(
+  election: Pick<Election, "submission_deadline">,
+  extendedUntil: string | null | undefined,
+) {
+  return extendedUntil && new Date(extendedUntil) > new Date(election.submission_deadline)
+    ? extendedUntil
+    : election.submission_deadline;
+}
 
 export const CANDIDACY_STATUS_LABELS: Record<CandidacyStatus, string> = {
   pending: "Pending review",

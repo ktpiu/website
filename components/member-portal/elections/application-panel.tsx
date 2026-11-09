@@ -18,6 +18,7 @@ import { formatEastern } from "@/lib/elections/eastern-time";
 import { validateTranscriptFile } from "@/lib/elections/uploads";
 import {
   CANDIDACY_STATUS_LABELS,
+  materialsDeadline,
   type Candidacy,
   type Election,
   type ElectionPosition,
@@ -296,7 +297,11 @@ export function ApplicationPanel() {
       {mine.candidacies.some((c) => c.status === "approved") ? (
         <SectionCard
           title="Campaign materials"
-          description={`Due ${formatEastern(election.submission_deadline)}. Members can review them after the deadline. Failure to comply with these requirements will result in a voided candidacy.`}
+          description={`Due ${formatEastern(materialsDeadline(election, mine.materials_extended_until))}${
+            materialsDeadline(election, mine.materials_extended_until) !== election.submission_deadline
+              ? " (extended by the Standards Board)"
+              : ""
+          }. Members can review them after the deadline. Failure to comply with these requirements will result in a voided candidacy.`}
           collapsible={!applicationsOpen}
           defaultOpen={election.phase !== "voting"}
         >
