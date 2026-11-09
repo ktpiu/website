@@ -121,12 +121,9 @@ import { cn } from "@/lib/utils";
 
 type View = { key: string; label: string; statuses: readonly AccountStatus[] };
 
-const RUSH_VIEW: View = { key: "rush", label: "Rushees & pledges", statuses: ["rushee", "pledge"] };
-
 const VIEWS: Record<UserDirectoryScope, View[]> = {
   all: [
     { key: "active", label: "Actives", statuses: ["active"] },
-    RUSH_VIEW,
     { key: "pledge", label: "Pledges", statuses: ["pledge"] },
     { key: "rushee", label: "Rushees", statuses: ["rushee"] },
     { key: "public", label: "Public", statuses: ["public"] },
@@ -135,7 +132,6 @@ const VIEWS: Record<UserDirectoryScope, View[]> = {
     { key: "all", label: "All", statuses: ACCOUNT_STATUSES },
   ],
   rush: [
-    RUSH_VIEW,
     { key: "rushee", label: "Rushees", statuses: ["rushee"] },
     { key: "pledge", label: "Pledges", statuses: ["pledge"] },
     { key: "public", label: "Public", statuses: ["public"] },
@@ -143,8 +139,8 @@ const VIEWS: Record<UserDirectoryScope, View[]> = {
   ],
 };
 
-/** Actives for admins; rushees and pledges for rush directors. */
-const DEFAULT_VIEW: Record<UserDirectoryScope, string> = { all: "active", rush: "rush" };
+/** Actives for admins; rushees for rush directors. */
+const DEFAULT_VIEW: Record<UserDirectoryScope, string> = { all: "active", rush: "rushee" };
 
 export default function AdminUsersPage() {
   const { permissions } = useAuthStore();
@@ -198,7 +194,7 @@ export default function AdminUsersPage() {
     if (scope) reload();
   }, [scope, reload]);
 
-  // ?view= deep links (e.g. the old rush PNM list redirects to ?view=rush).
+  // ?view= deep links (e.g. the old rush PNM list redirects to ?view=rushee).
   useEffect(() => {
     const param = new URLSearchParams(window.location.search).get("view");
     if (param) setViewKey(param);

@@ -138,7 +138,7 @@ export default function PnmDetailPage({ params }: { params: Promise<{ pnmId: str
   return (
     <div className="mx-auto max-w-5xl space-y-4 pb-10">
       <Button asChild variant="ghost" size="sm" className="-ml-2 mt-1">
-        <Link href="/member-portal/admin/users?view=rush">
+        <Link href="/member-portal/admin/users?view=rushee">
           <ArrowLeft className="mr-1 h-4 w-4" /> Rushees &amp; PNMs
         </Link>
       </Button>
