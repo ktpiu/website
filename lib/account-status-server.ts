@@ -22,10 +22,11 @@ export type StatusChangeResult = {
 
 /**
  * Keeps the rush record in line with a status move:
- *  - public -> rushee: registers them in the current cycle (creating the
+ *  - anything but pledge -> rushee: registers them in the current cycle (creating the
  *    rush record if needed). Needs an active cycle.
  *  - rushee -> pledge: they accepted a bid; the open cycle entry is "pledged".
- *  - rushee -> public: their rush ends; the open cycle entry is "former".
+ *  - rushee -> anything else (public, active, dropped, ...): their rush
+ *    ends; the open cycle entry is "former".
  *  - pledge -> rushee: undoes a bid.
  */
 async function syncRushRecord(
@@ -35,7 +36,7 @@ async function syncRushRecord(
   actorId: string,
   cycleId: string | null,
 ) {
-  if (to === "rushee" && from === "public") {
+  if (to === "rushee" && from !== "pledge") {
     if (!cycleId) throw new RushError(400, "There's no active rush cycle to register them for.");
     const { pnm } = await findOrCreatePnm({ email: user.email, name: user.name });
     if (!pnm.linked_user_id) {
@@ -73,7 +74,7 @@ async function syncRushRecord(
   if (from === "rushee" && to === "pledge") {
     await setPnm("pledge");
     await setEntry("pledged", true);
-  } else if (from === "rushee" && to === "public") {
+  } else if (from === "rushee") {
     await setPnm("former");
     await setEntry("former", true);
   } else if (from === "pledge" && to === "rushee") {

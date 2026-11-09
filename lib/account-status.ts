@@ -15,7 +15,8 @@ import {
  * "pledge", and initiating their pledge class (Roles page) or an individual
  * move makes it
  * initiation makes it "active". Actives can leave as alumni, dropped or
- * disaffiliated. Moves are permission-checked per transition on the server
+ * disaffiliated. Anyone with admin.users.edit can move any account to any
+ * status to fix mistakes. Moves are permission-checked per transition on the server
  * (lib/account-status-server.ts); the database trigger rejects any other
  * status write.
  */
@@ -102,16 +103,20 @@ export function transitionPermission(from: AccountStatus, to: AccountStatus) {
   return TRANSITIONS.find((t) => t.from === from && t.to === to)?.permission ?? null;
 }
 
+/**
+ * Admins who can modify accounts may move any account to any other status;
+ * everyone else is limited to the moves their permissions cover above.
+ */
 export function canTransition(permissions: Permissions, from: AccountStatus, to: AccountStatus) {
+  if (from === to) return false;
+  if (hasPermission(permissions, ADMIN_USERS_EDIT)) return true;
   const permission = transitionPermission(from, to);
   return Boolean(permission && hasPermission(permissions, permission));
 }
 
 /** Statuses the viewer may move an account in `from` to. */
 export function allowedTransitions(permissions: Permissions, from: AccountStatus): AccountStatus[] {
-  return TRANSITIONS.filter((t) => t.from === from && hasPermission(permissions, t.permission)).map(
-    (t) => t.to,
-  );
+  return ACCOUNT_STATUSES.filter((to) => canTransition(permissions, from, to));
 }
 
 /**

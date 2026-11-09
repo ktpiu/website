@@ -205,7 +205,8 @@ export function StatusChangeDialog({
 
   if (!target) return null;
   const names = users.map((u) => u.name);
-  const fromRushee = users.some((u) => u.account_status === "rushee");
+  // Anyone becoming a pledge (from rushee, public, ...) can get a pledge class.
+  const assignsPledgeClass = users.some((u) => u.account_status !== "pledge");
 
   const submit = async () => {
     setBusy(true);
@@ -213,7 +214,7 @@ export function StatusChangeDialog({
       const result = await changeAccountStatuses({
         userIds: users.map((u) => u.id),
         status: target,
-        pledgeRoleId: target === "pledge" && fromRushee ? pledgeRoleId || null : null,
+        pledgeRoleId: target === "pledge" && assignsPledgeClass ? pledgeRoleId || null : null,
       });
       if (result.changed.length) {
         toast.success(
@@ -252,13 +253,13 @@ export function StatusChangeDialog({
         ) : null}
         {target === "rushee" ? (
           <p className="text-sm text-muted-foreground">
-            Public accounts are registered for the active rush cycle.
+            They&apos;re registered for the active rush cycle.
           </p>
         ) : null}
-        {target === "public" && users.some((u) => u.account_status === "rushee") ? (
+        {target !== "rushee" && target !== "pledge" && users.some((u) => u.account_status === "rushee") ? (
           <p className="text-sm text-muted-foreground">Ends their rush for this cycle.</p>
         ) : null}
-        {target === "pledge" && fromRushee ? (
+        {target === "pledge" && assignsPledgeClass ? (
           <div className="space-y-1.5">
             <Label htmlFor="pledge-class">Pledge class</Label>
             <NativeSelect
