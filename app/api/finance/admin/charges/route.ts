@@ -82,9 +82,9 @@ export async function GET() {
         };
 
       const rowPaid = typeof row.paid_cents === "number" ? row.paid_cents : 0;
-      const isExempt = row.payment_state === "exempt";
+      const isExempt = row.payment_state === "exempt" || row.payment_state === "voided";
 
-      // Exempt obligations only count what was actually collected.
+      // Exempt and voided obligations only count what was actually collected.
       current.totalAssigned += 1;
       current.totalCents += isExempt
         ? rowPaid

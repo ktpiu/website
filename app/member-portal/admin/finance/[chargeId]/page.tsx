@@ -5,7 +5,19 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { toast } from "sonner";
-import { ArrowLeft, Pencil, Plus } from "lucide-react";
+import {
+  ArrowLeft,
+  Ban,
+  CircleSlash,
+  DollarSign,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  RotateCcw,
+  Search,
+  Trash2,
+  Undo2,
+} from "lucide-react";
 import { useAuthStore } from "@/lib/auth-store";
 import { canEditFinanceAdmin, canViewFinanceAdmin } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
@@ -18,6 +30,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -41,10 +60,11 @@ type Recipient = {
   paidCents: number;
   remainingCents: number;
   pendingCents: number;
-  payments: Array<{ paidAt: string | null; amountCents: number }>;
-  paymentState: "paid" | "partial" | "pending" | "unpaid" | "exempt";
+  payments: Array<{ paidAt: string | null; amountCents: number; source: "manual" | "stripe" }>;
+  paymentState: "paid" | "partial" | "pending" | "unpaid" | "exempt" | "voided";
   isOverdue: boolean;
   isExempt: boolean;
+  isVoided: boolean;
 };
 
 type ChargeDetail = {
@@ -64,7 +84,9 @@ type ChargeDetail = {
   recipients: Recipient[];
 };
 
-type Filter = "all" | "unpaid" | "pending" | "partial" | "paid" | "exempt";
+type Filter = "all" | "unpaid" | "pending" | "partial" | "paid" | "exempt" | "voided";
+
+type ConfirmAction = "exempt" | "voidCharge" | "voidPayment" | "delete";
 
 const PAGE_SIZE = 50;
 
@@ -74,6 +96,7 @@ const badgeClass: Record<Recipient["paymentState"], string> = {
   pending: "bg-blue-100 text-blue-900",
   unpaid: "bg-muted text-foreground/80",
   exempt: "bg-slate-200 text-slate-800",
+  voided: "bg-slate-200 text-slate-500",
 };
 
 export default function FinanceChargeDetailPage() {
@@ -88,8 +111,17 @@ export default function FinanceChargeDetailPage() {
   const [payAmount, setPayAmount] = useState("");
   const [payNotes, setPayNotes] = useState("");
   const [paying, setPaying] = useState(false);
-  const [exemptFor, setExemptFor] = useState<Recipient | null>(null);
-  const [exempting, setExempting] = useState(false);
+  const [search, setSearch] = useState("");
+  const [confirm, setConfirm] = useState<{ action: ConfirmAction; row: Recipient } | null>(
+    null,
+  );
+  const [acting, setActing] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{
+    row: Recipient;
+    x: number;
+    y: number;
+    key: number;
+  } | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [dueOpen, setDueOpen] = useState(false);
   const [dueInput, setDueInput] = useState("");
@@ -129,9 +161,9 @@ export default function FinanceChargeDetailPage() {
 
   const summary = useMemo(() => {
     const recipients = detail?.recipients ?? [];
-    // Exempt members only count what they actually paid.
+    // Exempt and voided members only count what they actually paid.
     const total = recipients.reduce(
-      (s, r) => s + (r.isExempt ? r.paidCents : r.amountCents),
+      (s, r) => s + (r.isExempt || r.isVoided ? r.paidCents : r.amountCents),
       0,
     );
     const paid = recipients.reduce((s, r) => s + r.paidCents, 0);
@@ -156,19 +188,26 @@ export default function FinanceChargeDetailPage() {
       pendingCount: count("pending"),
       pendingCents: recipients.reduce((s, r) => s + r.pendingCents, 0),
       exemptCount: count("exempt"),
+      voidedCount: count("voided"),
       unsettled: recipients.filter((r) => r.remainingCents > 0).length,
     };
   }, [detail]);
 
   const rows = useMemo(() => {
-    const order = { unpaid: 0, pending: 1, partial: 2, paid: 3, exempt: 4 } as const;
+    const order = { unpaid: 0, pending: 1, partial: 2, paid: 3, exempt: 4, voided: 5 } as const;
+    const terms = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
     return [...(detail?.recipients ?? [])]
       .filter((r) => filter === "all" || r.paymentState === filter)
+      .filter((r) => {
+        if (terms.length === 0) return true;
+        const haystack = `${r.name} ${r.email}`.toLowerCase();
+        return terms.every((term) => haystack.includes(term));
+      })
       .sort(
         (a, b) =>
           order[a.paymentState] - order[b.paymentState] || a.name.localeCompare(b.name),
       );
-  }, [detail, filter]);
+  }, [detail, filter, search]);
 
   const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
@@ -218,27 +257,139 @@ export default function FinanceChargeDetailPage() {
     }
   };
 
-  const handleExempt = async (recipient: Recipient, exempt: boolean) => {
+  // Runs one row action against the API, then refreshes.
+  const runAction = async (
+    row: Recipient,
+    request: { path: string; method: "POST" | "DELETE"; body?: unknown },
+    success: string,
+    failure: string,
+  ) => {
     try {
-      setExempting(true);
+      setActing(true);
       const response = await fetch(
-        `/api/finance/admin/obligations/${recipient.obligationId}/exempt`,
+        `/api/finance/admin/obligations/${row.obligationId}${request.path}`,
         {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ exempt }),
+          method: request.method,
+          headers: request.body ? { "Content-Type": "application/json" } : undefined,
+          body: request.body ? JSON.stringify(request.body) : undefined,
         },
       );
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "Failed to update exemption.");
-      toast.success(exempt ? `${recipient.name} exempted.` : "Exemption removed.");
-      setExemptFor(null);
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || failure);
+      toast.success(success);
+      setConfirm(null);
       await load();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to update exemption.");
+      toast.error(error instanceof Error ? error.message : failure);
     } finally {
-      setExempting(false);
+      setActing(false);
     }
+  };
+
+  const handleExempt = (row: Recipient, exempt: boolean) =>
+    runAction(
+      row,
+      { path: "/exempt", method: "POST", body: { exempt } },
+      exempt ? `${row.name} exempted.` : "Exemption removed.",
+      "Failed to update exemption.",
+    );
+
+  const handleVoidCharge = (row: Recipient, voided: boolean) =>
+    runAction(
+      row,
+      { path: "/void", method: "POST", body: { void: voided } },
+      voided ? `Charge voided for ${row.name}.` : "Charge restored.",
+      "Failed to void charge.",
+    );
+
+  const handleConfirm = () => {
+    if (!confirm) return;
+    const { action, row } = confirm;
+    if (action === "exempt") return handleExempt(row, true);
+    if (action === "voidCharge") return handleVoidCharge(row, true);
+    if (action === "voidPayment")
+      return runAction(
+        row,
+        { path: "/void-payments", method: "POST" },
+        "Payment voided.",
+        "Failed to void payment.",
+      );
+    return runAction(
+      row,
+      { path: "", method: "DELETE" },
+      `${row.name} removed from this transaction.`,
+      "Failed to delete charge.",
+    );
+  };
+
+  const manualPaidCents = (row: Recipient) =>
+    row.payments.filter((p) => p.source === "manual").reduce((s, p) => s + p.amountCents, 0);
+
+  const renderMenuItems = (row: Recipient) => {
+    const settled = row.isExempt || row.isVoided;
+    const hasManual = manualPaidCents(row) > 0;
+    const hasPaid = row.paidCents > 0 || row.pendingCents > 0;
+    return (
+      <>
+        <DropdownMenuItem
+          disabled={settled || row.remainingCents <= 0}
+          onSelect={() => openPayment(row)}
+        >
+          <DollarSign />
+          Record payment
+        </DropdownMenuItem>
+        {row.isExempt ? (
+          <DropdownMenuItem onSelect={() => void handleExempt(row, false)}>
+            <RotateCcw />
+            Remove exemption
+          </DropdownMenuItem>
+        ) : (
+          <DropdownMenuItem
+            disabled={row.isVoided || row.remainingCents <= 0}
+            onSelect={() => setConfirm({ action: "exempt", row })}
+          >
+            <CircleSlash />
+            Exempt
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuSeparator />
+        {row.paidCents > 0 && (
+          <DropdownMenuItem
+            disabled={!hasManual}
+            onSelect={() => setConfirm({ action: "voidPayment", row })}
+          >
+            <Undo2 />
+            Void payment
+            {!hasManual && (
+              <span className="ml-auto text-xs text-muted-foreground">Stripe</span>
+            )}
+          </DropdownMenuItem>
+        )}
+        {row.isVoided ? (
+          <DropdownMenuItem onSelect={() => void handleVoidCharge(row, false)}>
+            <RotateCcw />
+            Restore charge
+          </DropdownMenuItem>
+        ) : (
+          <DropdownMenuItem onSelect={() => setConfirm({ action: "voidCharge", row })}>
+            <Ban />
+            Void charge
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          variant="destructive"
+          disabled={hasPaid}
+          onSelect={() => setConfirm({ action: "delete", row })}
+        >
+          <Trash2 />
+          Delete
+          {hasPaid && (
+            <span className="ml-auto text-xs text-muted-foreground">Has payments</span>
+          )}
+        </DropdownMenuItem>
+      </>
+    );
   };
 
   const openDueDialog = () => {
@@ -323,7 +474,61 @@ export default function FinanceChargeDetailPage() {
     ...(summary.exemptCount > 0
       ? ([["exempt", "Exempt", summary.exemptCount]] as Array<[Filter, string, number]>)
       : []),
+    ...(summary.voidedCount > 0
+      ? ([["voided", "Voided", summary.voidedCount]] as Array<[Filter, string, number]>)
+      : []),
   ];
+
+  const confirmCopy = (() => {
+    if (!confirm) return null;
+    const { action, row } = confirm;
+    if (action === "exempt")
+      return {
+        title: `Exempt ${row.name}?`,
+        body: `This removes ${formatCents(row.remainingCents)} from what's owed on ${charge.title} and from the transaction total.${
+          row.paidCents > 0
+            ? ` The ${formatCents(row.paidCents)} already paid stays recorded.`
+            : ""
+        } You can remove the exemption later.`,
+        cta: "Exempt",
+        busy: "Exempting...",
+        destructive: false,
+      };
+    if (action === "voidCharge")
+      return {
+        title: `Void ${row.name}'s charge?`,
+        body: `${row.name} will no longer owe anything on ${charge.title}, and the charge disappears from their account. It stays here as voided for your records.${
+          row.paidCents > 0
+            ? ` The ${formatCents(row.paidCents)} already paid stays recorded; void the payment separately if it should be reversed.`
+            : ""
+        } You can restore it later.`,
+        cta: "Void charge",
+        busy: "Voiding...",
+        destructive: true,
+      };
+    if (action === "voidPayment") {
+      const manual = manualPaidCents(row);
+      const stripe = row.paidCents - manual;
+      return {
+        title: `Void ${row.name}'s payment?`,
+        body: `This reverses ${formatCents(manual)} in manually recorded payments, so it no longer counts toward ${charge.title}. If a payment was split across other charges, it's voided there too.${
+          stripe > 0
+            ? ` The ${formatCents(stripe)} paid through Stripe isn't affected and must be refunded in Stripe.`
+            : ""
+        }`,
+        cta: "Void payment",
+        busy: "Voiding...",
+        destructive: true,
+      };
+    }
+    return {
+      title: `Delete ${row.name}'s charge?`,
+      body: `This removes ${row.name} from ${charge.title} entirely. This can't be undone, but you can add them back with Add members.`,
+      cta: "Delete",
+      busy: "Deleting...",
+      destructive: true,
+    };
+  })();
 
   return (
     <div className="space-y-6 p-4 md:p-8">
@@ -457,17 +662,32 @@ export default function FinanceChargeDetailPage() {
               </button>
             ))}
           </div>
-          {canEdit && (
-            <Button size="sm" variant="outline" onClick={() => setAddOpen(true)}>
-              <Plus className="size-4" />
-              Add members
-            </Button>
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex h-9 w-full items-center gap-2 rounded-md border px-2.5 sm:w-64">
+              <Search className="size-4 shrink-0 text-muted-foreground" />
+              <input
+                aria-label="Search members"
+                value={search}
+                onChange={(event) => {
+                  setSearch(event.target.value);
+                  setPage(0);
+                }}
+                placeholder="Search members"
+                className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none"
+              />
+            </div>
+            {canEdit && (
+              <Button size="sm" variant="outline" onClick={() => setAddOpen(true)}>
+                <Plus className="size-4" />
+                Add members
+              </Button>
+            )}
+          </div>
         </div>
 
         <div className="overflow-x-auto">
-          <div className="min-w-[1080px]">
-            <div className="grid grid-cols-[minmax(0,2.2fr)_100px_100px_100px_120px_110px_240px] gap-4 border-b bg-muted/40 px-5 py-3 text-[12.5px] font-medium text-muted-foreground">
+          <div className="min-w-[860px]">
+            <div className="grid grid-cols-[minmax(0,2.2fr)_100px_100px_100px_120px_110px_40px] gap-4 border-b bg-muted/40 px-5 py-3 text-[12.5px] font-medium text-muted-foreground">
               <span>Member</span>
               <span className="text-right">Amount</span>
               <span className="text-right">Paid</span>
@@ -479,7 +699,12 @@ export default function FinanceChargeDetailPage() {
             {pageRows.map((row) => (
               <div
                 key={row.obligationId}
-                className="grid min-h-11 grid-cols-[minmax(0,2.2fr)_100px_100px_100px_120px_110px_240px] items-center gap-4 border-b px-5 py-2.5 last:border-b-0"
+                onContextMenu={(event) => {
+                  if (!canEdit) return;
+                  event.preventDefault();
+                  setContextMenu({ row, x: event.clientX, y: event.clientY, key: Date.now() });
+                }}
+                className="grid min-h-11 grid-cols-[minmax(0,2.2fr)_100px_100px_100px_120px_110px_40px] items-center gap-4 border-b px-5 py-2.5 last:border-b-0"
               >
                 <div className="flex min-w-0 items-center gap-3">
                   <MemberAvatar name={row.name} src={row.avatar} />
@@ -491,7 +716,7 @@ export default function FinanceChargeDetailPage() {
                 <span
                   className={cn(
                     "text-right text-sm",
-                    row.isExempt && "text-muted-foreground line-through",
+                    (row.isExempt || row.isVoided) && "text-muted-foreground line-through",
                   )}
                 >
                   {formatCents(row.amountCents)}
@@ -527,44 +752,31 @@ export default function FinanceChargeDetailPage() {
                 >
                   {row.isOverdue && row.paymentState !== "paid" ? "Overdue" : row.paymentState}
                 </span>
-                <div className="flex justify-end gap-1.5">
-                  {row.isExempt ? (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={!canEdit || exempting}
-                      onClick={() => void handleExempt(row, false)}
-                    >
-                      Remove exemption
-                    </Button>
-                  ) : (
-                    row.remainingCents > 0 && (
-                      <>
+                <div className="flex justify-end">
+                  {canEdit && (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
                         <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={!canEdit}
-                          onClick={() => openPayment(row)}
-                        >
-                          Record payment
-                        </Button>
-                        <Button
-                          size="sm"
                           variant="ghost"
-                          disabled={!canEdit}
-                          onClick={() => setExemptFor(row)}
+                          size="icon"
+                          className="size-8"
+                          disabled={acting}
+                          aria-label={`Actions for ${row.name}`}
                         >
-                          Exempt
+                          <MoreHorizontal className="size-4" />
                         </Button>
-                      </>
-                    )
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-52">
+                        {renderMenuItems(row)}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   )}
                 </div>
               </div>
             ))}
             {rows.length === 0 && (
               <div className="px-5 py-10 text-center text-sm text-muted-foreground">
-                No members in this view.
+                {search.trim() ? "No members match your search." : "No members in this view."}
               </div>
             )}
           </div>
@@ -659,33 +871,46 @@ export default function FinanceChargeDetailPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={exemptFor !== null} onOpenChange={(open) => !open && setExemptFor(null)}>
+      <Dialog open={confirm !== null} onOpenChange={(open) => !open && setConfirm(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Exempt {exemptFor?.name}?</DialogTitle>
-            <DialogDescription>
-              {exemptFor
-                ? `This removes ${formatCents(exemptFor.remainingCents)} from what's owed on ${charge.title} and from the transaction total.${
-                    exemptFor.paidCents > 0
-                      ? ` The ${formatCents(exemptFor.paidCents)} already paid stays recorded.`
-                      : ""
-                  } You can remove the exemption later.`
-                : ""}
-            </DialogDescription>
+            <DialogTitle>{confirmCopy?.title}</DialogTitle>
+            <DialogDescription>{confirmCopy?.body}</DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setExemptFor(null)}>
+            <Button variant="outline" onClick={() => setConfirm(null)}>
               Cancel
             </Button>
             <Button
-              disabled={exempting}
-              onClick={() => exemptFor && void handleExempt(exemptFor, true)}
+              variant={confirmCopy?.destructive ? "destructive" : "default"}
+              disabled={acting}
+              onClick={() => void handleConfirm()}
             >
-              {exempting ? "Exempting..." : "Exempt"}
+              {acting ? confirmCopy?.busy : confirmCopy?.cta}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {contextMenu && (
+        <DropdownMenu
+          key={contextMenu.key}
+          open
+          modal={false}
+          onOpenChange={(open) => !open && setContextMenu(null)}
+        >
+          <DropdownMenuTrigger asChild>
+            <span
+              aria-hidden
+              className="pointer-events-none fixed size-0"
+              style={{ left: contextMenu.x, top: contextMenu.y }}
+            />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-52">
+            {renderMenuItems(contextMenu.row)}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
 
       <Dialog open={payFor !== null} onOpenChange={(open) => !open && setPayFor(null)}>
         <DialogContent>

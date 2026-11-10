@@ -23,7 +23,10 @@ type ChargeTargetRow = {
 // Completed payments toward each obligation, oldest first. The webhook stamps
 // updated_at when a Stripe payment settles; manual payments are completed on insert.
 async function loadCompletedPaymentsByObligation(obligationIds: string[]) {
-  const byObligationId = new Map<string, Array<{ paidAt: string | null; amountCents: number }>>();
+  const byObligationId = new Map<
+    string,
+    Array<{ paidAt: string | null; amountCents: number; source: "manual" | "stripe" }>
+  >();
   if (obligationIds.length === 0) return byObligationId;
 
   const allocationsRes = await supabase
@@ -38,25 +41,31 @@ async function loadCompletedPaymentsByObligation(obligationIds: string[]) {
 
   const paymentsRes = await supabase
     .from("finance_payments")
-    .select("id, created_at, updated_at")
+    .select("id, source, created_at, updated_at")
     .in("id", paymentIds)
     .eq("status", "completed");
   if (paymentsRes.error) throw paymentsRes.error;
 
-  const paidAtByPaymentId = new Map(
+  const paymentById = new Map(
     (paymentsRes.data ?? []).map((row) => [
       row.id as string,
-      (typeof row.updated_at === "string" ? row.updated_at : null) ??
-        (typeof row.created_at === "string" ? row.created_at : null),
+      {
+        paidAt:
+          (typeof row.updated_at === "string" ? row.updated_at : null) ??
+          (typeof row.created_at === "string" ? row.created_at : null),
+        source: (row.source === "manual" ? "manual" : "stripe") as "manual" | "stripe",
+      },
     ]),
   );
 
   for (const row of allocations) {
     const paymentId = row.payment_id as string;
-    if (!paidAtByPaymentId.has(paymentId)) continue;
+    const payment = paymentById.get(paymentId);
+    if (!payment) continue;
     const list = byObligationId.get(row.obligation_id as string) ?? [];
     list.push({
-      paidAt: paidAtByPaymentId.get(paymentId) ?? null,
+      paidAt: payment.paidAt,
+      source: payment.source,
       amountCents: typeof row.amount_cents === "number" ? row.amount_cents : 0,
     });
     byObligationId.set(row.obligation_id as string, list);
@@ -153,6 +162,7 @@ export async function GET(
         paymentState: pendingCents > 0 ? "pending" : obligation.payment_state,
         isOverdue: obligation.is_overdue && pendingCents === 0,
         isExempt: obligation.payment_state === "exempt",
+        isVoided: obligation.payment_state === "voided",
         dueAt: obligation.due_at,
       };
     });

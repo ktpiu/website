@@ -1,6 +1,6 @@
-export type FinancePaymentState = "paid" | "partial" | "unpaid" | "exempt";
+export type FinancePaymentState = "paid" | "partial" | "unpaid" | "exempt" | "voided";
 export type FinancePaymentSource = "stripe" | "manual";
-export type FinancePaymentStatus = "pending" | "completed" | "failed" | "canceled";
+export type FinancePaymentStatus = "pending" | "completed" | "failed" | "canceled" | "voided";
 export type FinanceAllocationMode = "auto_fifo" | "manual_selection";
 
 export type FinanceChargeInput = {
@@ -47,6 +47,7 @@ export type FinanceObligationBalance = {
   payment_state: FinancePaymentState;
   is_overdue: boolean;
   exempted_at: string | null;
+  voided_at: string | null;
 };
 
 export type FinanceAllocationInput = {

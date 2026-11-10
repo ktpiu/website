@@ -126,11 +126,13 @@ function parseObligationBalance(row: unknown): FinanceObligationBalance | null {
       value.payment_state === "paid" ||
       value.payment_state === "partial" ||
       value.payment_state === "unpaid" ||
-      value.payment_state === "exempt"
+      value.payment_state === "exempt" ||
+      value.payment_state === "voided"
         ? value.payment_state
         : "unpaid",
     is_overdue: value.is_overdue,
     exempted_at: typeof value.exempted_at === "string" ? value.exempted_at : null,
+    voided_at: typeof value.voided_at === "string" ? value.voided_at : null,
   };
 }
 
@@ -290,11 +292,13 @@ export async function ensureFinanceCustomerForUser(user: BasicUser) {
   };
 }
 
+/** A member's charges. Voided charges were issued in error, so they're left out. */
 export async function loadObligationBalancesForUser(userId: string) {
   const { data, error } = await supabase
     .from("finance_obligation_balances")
     .select("*")
     .eq("user_id", userId)
+    .neq("payment_state", "voided")
     .order("due_at", { ascending: true, nullsFirst: false })
     .order("created_at", { ascending: true });
 

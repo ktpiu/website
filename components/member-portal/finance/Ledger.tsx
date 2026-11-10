@@ -19,7 +19,7 @@ export type LedgerChargeEntry = {
   remainingCents: number;
   dueAt: string | null;
   isOverdue: boolean;
-  paymentState: "paid" | "partial" | "unpaid" | "exempt";
+  paymentState: "paid" | "partial" | "unpaid" | "exempt" | "voided";
 };
 
 export type LedgerPaymentEntry = {
@@ -68,7 +68,7 @@ function getChargeStatus(entry: LedgerChargeEntry) {
 
 function getPaymentStatusVariant(status: string) {
   if (status === "completed") return "default" as const;
-  if (status === "failed" || status === "canceled") {
+  if (status === "failed" || status === "canceled" || status === "voided") {
     return "destructive" as const;
   }
   return "secondary" as const;
